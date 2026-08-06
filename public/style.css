@@ -548,6 +548,32 @@ tr:last-child td { border-bottom: none; }
   font-size: 13px; color: var(--ink);
 }
 .goal-next b { color: var(--green-dark); }
+.goal-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
+.gtag-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.gtag {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; padding: 3px 10px; border-radius: 999px;
+  background: var(--page); border: 1px solid var(--grid); color: var(--ink-2);
+}
+.gtag button {
+  border: none; background: none; padding: 0 0 0 2px; font-size: 11px;
+  color: var(--muted); cursor: pointer; box-shadow: none;
+}
+.gtag button:hover { color: var(--critical); transform: none; box-shadow: none; }
+.gtag.suggest {
+  border: 1px dashed var(--seq-3); color: var(--green-dark); background: #fbfefc;
+  cursor: pointer; font-weight: 600;
+}
+.gtag.suggest:hover { background: var(--seq-1); transform: scale(1.04); box-shadow: none; }
+.gtag.add { border: 1px dashed var(--grid); color: var(--muted); background: transparent; cursor: pointer; }
+.gtag.add:hover { color: var(--ink-2); transform: scale(1.04); box-shadow: none; }
+.gtag-input { display: inline-flex; align-items: center; gap: 4px; }
+.gtag-input input {
+  font: inherit; font-size: 11.5px; padding: 3px 12px; width: 180px;
+  border: 1px solid var(--seq-3); border-radius: 999px; background: var(--surface);
+}
+.gtag-input input:focus { outline: none; border-color: var(--green); }
+.gtag-input button { padding: 2px 9px; font-size: 11px; }
 
 /* ---------- drive panes ---------- */
 .drive-panes { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-top: 18px; }

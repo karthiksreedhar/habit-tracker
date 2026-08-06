@@ -49,6 +49,7 @@ async function boot() {
   const data = await res.json();
   if (data.error) { $('errors').textContent = 'Failed to build dashboard: ' + data.error; return; }
 
+  window.APP_DATA = data; // parsed sources, reused for tag suggestions etc.
   NEEDS_SETUP = !!data.needsSetup;
   const loggedDays = Math.max(data.habits.days.length, data.journal.length);
   NEEDS_DATA = loggedDays === 0;
@@ -683,10 +684,23 @@ function renderGoals(goals, assessment) {
         ${a.next_step ? `<div class="goal-next"><b>Next:</b> ${esc(a.next_step)}</div>` : ''}`;
     }
     const safeText = esc(g.text).replace(/'/g, '&#39;');
+    const safe = (s) => esc(String(s)).replace(/'/g, '&#39;');
+    const links = g.links || [];
+    const sug = ((a && a.suggested_links) || [])
+      .filter((s) => s && s.phrase && !links.includes(String(s.phrase).toLowerCase()))
+      .slice(0, 3);
+    let tags = `<div class="goal-tags">`;
+    if (links.length) tags += `<span class="gtag-label">counting:</span>`;
+    tags += links.map((p) =>
+      `<span class="gtag" title="Tagged as counting toward this goal">${esc(p)}<button title="Stop counting this" onclick="unlinkGoalTag('${esc(g.id)}','${safe(p)}')">×</button></span>`).join('');
+    tags += sug.map((s) =>
+      `<button class="gtag suggest" title="${esc(s.why || '')} — click to count it" onclick="linkGoalTag('${esc(g.id)}','${safe(s.phrase)}')">+ ${esc(s.phrase)}</button>`).join('');
+    tags += `<button class="gtag add" title="Tag an activity or habit as counting toward this goal" onclick="showTagInput(this,'${esc(g.id)}')">+ tag</button></div>`;
     return `<div class="goal-card">
       <button class="goal-x" title="Delete this goal" onclick="removeGoalById('${esc(g.id)}', '${safeText}')">🗑 Delete</button>
       <p class="goal-text">${esc(g.text)}</p>
       ${body}
+      ${tags}
     </div>`;
   }).join('') + `</div>`;
 
@@ -695,6 +709,58 @@ function renderGoals(goals, assessment) {
     <span class="note">${stale ? 'New goal added — refresh to measure it.' : when ? 'Assessed ' + esc(when) : ''}</span>
     <button onclick="reassessGoals(this)">↻ Re-assess</button>
   </div>`);
+}
+
+// ---- tagging activities/habits as counting toward a goal ----
+
+async function linkGoalTag(id, phrase) {
+  phrase = String(phrase || '').trim();
+  if (!phrase) return;
+  await fetch(`/api/goals/${encodeURIComponent(id)}/link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phrase }),
+  });
+  GOALS_LOADED = false;
+  loadGoals(true); // assessment was invalidated server-side, so this re-measures
+}
+
+async function unlinkGoalTag(id, phrase) {
+  await fetch(`/api/goals/${encodeURIComponent(id)}/unlink`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phrase }),
+  });
+  GOALS_LOADED = false;
+  loadGoals(true);
+}
+
+// Inline input with every known activity title + habit name as suggestions
+function showTagInput(btn, id) {
+  const options = tagSuggestionOptions();
+  btn.outerHTML = `<span class="gtag-input">
+    <input list="tag-dl" id="tag-in-${id}" placeholder="activity or habit…"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();linkGoalTag('${id}',this.value)}">
+    <datalist id="tag-dl">${options}</datalist>
+    <button title="Save tag" onclick="linkGoalTag('${id}',document.getElementById('tag-in-${id}').value)">✓</button>
+  </span>`;
+  const input = document.getElementById('tag-in-' + id);
+  if (input) input.focus();
+}
+
+function tagSuggestionOptions() {
+  const seen = new Set();
+  const d = window.APP_DATA;
+  if (d) {
+    for (const name of d.habits.habitNames || []) seen.add(name.toLowerCase());
+    for (const day of d.journal || []) {
+      for (const a of day.activities || []) {
+        const t = String(a.title || '').trim().toLowerCase();
+        if (t && !/^(sleep|slept|woke)/.test(t)) seen.add(t);
+      }
+    }
+  }
+  return [...seen].slice(0, 80).map((t) => `<option value="${esc(t)}"></option>`).join('');
 }
 
 async function reassessGoals(btn) {

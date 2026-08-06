@@ -31,7 +31,7 @@ const {
 } = require('./lib/coach');
 const { getUser, updateUser } = require('./lib/db');
 const { getReport, listReports } = require('./lib/report');
-const { listGoals, addGoal, removeGoal, assessGoals, goalsPromptBlock } = require('./lib/goals');
+const { listGoals, addGoal, removeGoal, assessGoals, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
 
 const PORT = process.env.PORT || 5757;
 const CREDS_PATH = path.join(__dirname, 'google-credentials.json');
@@ -570,6 +570,22 @@ app.get('/api/goals', async (req, res) => {
 app.post('/api/goals', async (req, res) => {
   try {
     res.json({ ok: true, goal: await addGoal(req.userEmail, req.body.text) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/goals/:id/link', async (req, res) => {
+  try {
+    res.json({ ok: true, goal: await linkActivity(req.userEmail, req.params.id, req.body.phrase) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/goals/:id/unlink', async (req, res) => {
+  try {
+    res.json({ ok: true, goal: await unlinkActivity(req.userEmail, req.params.id, req.body.phrase) });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
