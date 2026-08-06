@@ -1,0 +1,415 @@
+// Habit + journal dashboard server — multi-user, Mongo-backed, Vercel-ready.
+//
+// Modes:
+// - Hosted / configured: GOOGLE_CLIENT_ID+SECRET set (env or google-credentials.json)
+//   → users sign in with Google, paste their Sheet + Doc links, everything is
+//   per-user in Mongo (tokens, links, coach state).
+// - Local demo: no Google OAuth configured → no login, seed CSV + journal,
+//   coach state stored in Mongo under a demo user.
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+// Tiny .env loader (keeps the project dependency-light); Vercel injects env directly.
+try {
+  for (const line of fs.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n')) {
+    const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim();
+  }
+} catch {}
+
+const express = require('express');
+const { google } = require('googleapis');
+const { csvToRows, parseHabitRows, parseJournal } = require('./lib/parse');
+const { buildInsights } = require('./lib/analytics');
+const {
+  getCoach, setChecked, replaceTodo,
+  getWeeklyCoach, setWeeklyChecked, replaceWeeklyGoal,
+  DEMO_EMAIL,
+} = require('./lib/coach');
+const { getUser, updateUser } = require('./lib/db');
+
+const PORT = process.env.PORT || 5757;
+const CREDS_PATH = path.join(__dirname, 'google-credentials.json');
+const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
+const SESSION_COOKIE = 'hd_session';
+const SESSION_DAYS = 30;
+const SCOPES = [
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/spreadsheets.readonly',
+  'https://www.googleapis.com/auth/documents.readonly',
+];
+
+const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ---------- OAuth config ----------
+
+function oauthCreds() {
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    return { client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET };
+  }
+  try {
+    const c = JSON.parse(fs.readFileSync(CREDS_PATH, 'utf8'));
+    return c.web || c.installed;
+  } catch {
+    return null;
+  }
+}
+const demoMode = () => !oauthCreds();
+
+function redirectUri(req) {
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  return `${proto}://${host}/oauth2callback`;
+}
+
+function makeOAuthClient(req) {
+  const c = oauthCreds();
+  if (!c) return null;
+  return new google.auth.OAuth2(c.client_id, c.client_secret, redirectUri(req));
+}
+
+// ---------- session cookies (HMAC-signed, httpOnly) ----------
+
+function signSession(email) {
+  const payload = Buffer.from(JSON.stringify({ email, exp: Date.now() + SESSION_DAYS * 864e5 })).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifySession(token) {
+  try {
+    const [payload, sig] = String(token).split('.');
+    const expect = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (!data.email || data.exp < Date.now()) return null;
+    return data.email;
+  } catch {
+    return null;
+  }
+}
+
+function getSessionEmail(req) {
+  const cookies = String(req.headers.cookie || '');
+  const m = cookies.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`));
+  return m ? verifySession(decodeURIComponent(m[1])) : null;
+}
+
+function setSessionCookie(req, res, email) {
+  const secure = (req.headers['x-forwarded-proto'] || req.protocol) === 'https';
+  res.setHeader('Set-Cookie',
+    `${SESSION_COOKIE}=${encodeURIComponent(signSession(email))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}${secure ? '; Secure' : ''}`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+// Resolve the acting user for a request (demo user when OAuth isn't configured).
+function userEmailFor(req) {
+  const email = getSessionEmail(req);
+  if (email) return email;
+  return demoMode() ? DEMO_EMAIL : null;
+}
+
+// Gate /api/* (except status) behind a user identity.
+app.use('/api', (req, res, next) => {
+  if (req.path === '/status') return next();
+  const email = userEmailFor(req);
+  if (!email) return res.status(401).json({ error: 'Not signed in', loginRequired: true });
+  req.userEmail = email;
+  next();
+});
+
+// ---------- auth routes ----------
+
+app.get('/auth/google', (req, res) => {
+  const client = makeOAuthClient(req);
+  if (!client) return res.status(400).send('Google OAuth not configured — set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.');
+  res.redirect(client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: SCOPES,
+  }));
+});
+
+app.get('/oauth2callback', async (req, res) => {
+  try {
+    const client = makeOAuthClient(req);
+    const { tokens } = await client.getToken(req.query.code);
+    client.setCredentials(tokens);
+    const oauth2 = google.oauth2({ version: 'v2', auth: client });
+    const { data: userInfo } = await oauth2.userinfo.get();
+    const email = String(userInfo.email || '').toLowerCase();
+    if (!email) throw new Error('Google did not return an email address');
+
+    // Preserve an existing refresh_token if this grant didn't include one
+    const existing = await getUser(email);
+    const merged = { ...(existing && existing.tokens), ...tokens };
+    await updateUser(email, { tokens: merged });
+
+    setSessionCookie(req, res, email);
+    res.redirect('/');
+  } catch (e) {
+    res.status(500).send('Sign-in failed: ' + e.message);
+  }
+});
+
+app.post('/api/logout', (req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.get('/api/status', async (req, res) => {
+  const email = getSessionEmail(req);
+  const demo = demoMode();
+  let user = null;
+  if (email) {
+    try { user = await getUser(email); } catch {}
+  }
+  res.json({
+    googleConfigured: !demo,
+    loginRequired: !demo && !email,
+    loggedIn: !!email,
+    demo,
+    email: email || (demo ? 'local demo' : null),
+    sheetUrl: user ? user.sheetUrl || null : null,
+    docUrl: user ? user.docUrl || null : null,
+  });
+});
+
+app.post('/api/config', async (req, res) => {
+  try {
+    const fields = {};
+    if ('sheetUrl' in req.body) fields.sheetUrl = String(req.body.sheetUrl || '').trim() || null;
+    if ('docUrl' in req.body) fields.docUrl = String(req.body.docUrl || '').trim() || null;
+    fields.dataConfirmed = false; // new links -> re-confirm the parse
+    await updateUser(req.userEmail, fields);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// What did we actually parse? Most recent day from each source, so the user
+// can confirm their (possibly slightly different) format was read correctly.
+app.get('/api/preview', async (req, res) => {
+  try {
+    const data = await loadDashboardData(req);
+    const lastH = data.habits.days[data.habits.days.length - 1] || null;
+    const lastJ = data.journal[data.journal.length - 1] || null;
+    res.json({
+      errors: data.source.errors,
+      habits: {
+        daysParsed: data.habits.days.length,
+        habitCount: data.habits.habitNames.length,
+        last: lastH ? {
+          date: lastH.date,
+          weekday: lastH.weekday,
+          done: data.habits.habitNames.filter((h) => lastH.values[h]),
+          missed: data.habits.habitNames.filter((h) => !lastH.values[h]),
+        } : null,
+      },
+      journal: {
+        daysParsed: data.journal.length,
+        last: lastJ ? {
+          date: lastJ.date,
+          score: lastJ.score,
+          city: lastJ.city,
+          activities: lastJ.activities.map((a) => ({ time: a.time, title: a.title, location: a.location, rating: a.rating })),
+        } : null,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/confirm-data', async (req, res) => {
+  try {
+    await updateUser(req.userEmail, { dataConfirmed: true });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------- Google data fetching ----------
+
+function extractId(url, kind) {
+  if (!url) return null;
+  const m = String(url).match(
+    kind === 'sheet' ? /spreadsheets\/d\/([\w-]+)/ : /document\/d\/([\w-]+)/
+  );
+  if (m) return m[1];
+  return /^[\w-]{20,}$/.test(String(url).trim()) ? String(url).trim() : null;
+}
+
+function authedClientForUser(req, user) {
+  if (!user || !user.tokens) return null;
+  const client = makeOAuthClient(req);
+  if (!client) return null;
+  client.setCredentials(user.tokens);
+  client.on('tokens', (t) => {
+    updateUser(user.email, { tokens: { ...user.tokens, ...t } }).catch(() => {});
+  });
+  return client;
+}
+
+async function fetchSheetRows(client, sheetUrl) {
+  const id = extractId(sheetUrl, 'sheet');
+  if (!id) throw new Error('Bad sheet URL');
+  const sheets = google.sheets({ version: 'v4', auth: client });
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: id });
+  const tabs = meta.data.sheets.map((s) => s.properties.title);
+  const tab = tabs[0];
+  const { data } = await sheets.spreadsheets.values.get({
+    spreadsheetId: id,
+    range: `'${tab}'!A1:AB1100`,
+  });
+  return data.values || [];
+}
+
+async function fetchDocText(client, docUrl) {
+  const id = extractId(docUrl, 'doc');
+  if (!id) throw new Error('Bad doc URL');
+  const docs = google.docs({ version: 'v1', auth: client });
+  const { data } = await docs.documents.get({ documentId: id });
+  const lines = [];
+  for (const el of data.body.content || []) {
+    if (!el.paragraph) continue;
+    let line = '';
+    for (const run of el.paragraph.elements || []) {
+      if (run.textRun) line += run.textRun.content;
+    }
+    lines.push(line.replace(/\n$/, ''));
+  }
+  return lines.join('\n');
+}
+
+async function loadDashboardData(req) {
+  const today = new Date();
+  const email = req.userEmail;
+  const source = { habits: 'seed', journal: 'seed', errors: [] };
+  let habitRows = null;
+  let journalText = null;
+  let needsSetup = false;
+  let needsConfirm = false;
+
+  if (email !== DEMO_EMAIL) {
+    const user = await getUser(email);
+    const client = authedClientForUser(req, user);
+    if (!user || (!user.sheetUrl && !user.docUrl)) needsSetup = true;
+    else if (!user.dataConfirmed) needsConfirm = true;
+    if (client && user.sheetUrl) {
+      try {
+        habitRows = await fetchSheetRows(client, user.sheetUrl);
+        source.habits = 'google';
+      } catch (e) { source.errors.push('Sheet fetch failed: ' + e.message); }
+    }
+    if (client && user.docUrl) {
+      try {
+        journalText = await fetchDocText(client, user.docUrl);
+        source.journal = 'google';
+      } catch (e) { source.errors.push('Doc fetch failed: ' + e.message); }
+    }
+    // Real users never fall back to the local demo seed data
+    if (!habitRows) habitRows = [];
+    if (journalText === null) journalText = '';
+  } else {
+    try { habitRows = csvToRows(fs.readFileSync(path.join(__dirname, 'seed-habits.csv'), 'utf8')); }
+    catch { habitRows = []; }
+    try { journalText = fs.readFileSync(path.join(__dirname, 'seed-journal.txt'), 'utf8'); }
+    catch { journalText = ''; }
+  }
+
+  const habits = parseHabitRows(habitRows, today);
+  const journal = parseJournal(journalText);
+  const insights = buildInsights(habits, journal);
+  return { source, needsSetup, needsConfirm, fetchedAt: today.toISOString(), habits, journal, insights };
+}
+
+const hasData = (d) => d.habits.days.length || d.journal.length;
+
+// ---------- data + coach API ----------
+
+app.get('/api/data', async (req, res) => {
+  try {
+    res.json(await loadDashboardData(req));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/coach', async (req, res) => {
+  try {
+    const data = await loadDashboardData(req);
+    if (!hasData(data)) return res.json({ error: 'Add your habit tracker + journal links first (⚙︎ Widgets → Data sources).' });
+    res.json(await getCoach(req.userEmail, { ...data, force: req.query.refresh === '1' }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coach/check', async (req, res) => {
+  try {
+    const { date, index, checked } = req.body;
+    res.json({ ok: true, checked: await setChecked(req.userEmail, date, Number(index), !!checked) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/coach/fail', async (req, res) => {
+  try {
+    const { date, index } = req.body;
+    const data = await loadDashboardData(req);
+    res.json(await replaceTodo(req.userEmail, { date, index: Number(index), ...data }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/coach/weekly', async (req, res) => {
+  try {
+    const data = await loadDashboardData(req);
+    if (!hasData(data)) return res.json({ error: 'Add your habit tracker + journal links first (⚙︎ Widgets → Data sources).' });
+    res.json(await getWeeklyCoach(req.userEmail, { ...data, force: req.query.refresh === '1' }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/coach/weekly/check', async (req, res) => {
+  try {
+    const { week, index, checked } = req.body;
+    res.json({ ok: true, checked: await setWeeklyChecked(req.userEmail, week, Number(index), !!checked) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/coach/weekly/fail', async (req, res) => {
+  try {
+    const { week, index } = req.body;
+    const data = await loadDashboardData(req);
+    res.json(await replaceWeeklyGoal(req.userEmail, { week, index: Number(index), ...data }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ---------- boot ----------
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Habit dashboard running at http://localhost:${PORT}`);
+    console.log(`Mode: ${demoMode() ? 'local demo (no Google OAuth configured)' : 'multi-user (Google sign-in)'}`);
+  });
+}
+
+module.exports = app;

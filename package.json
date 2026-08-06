@@ -1,0 +1,15 @@
+{
+  "name": "habit-dashboard",
+  "version": "1.0.0",
+  "description": "Personal habit + journal dashboard with Google Sheets/Docs sync",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "express": "^4.19.2",
+    "googleapis": "^140.0.0",
+    "mongodb": "^7.5.0"
+  }
+}

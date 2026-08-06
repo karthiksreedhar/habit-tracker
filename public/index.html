@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Karthik — Life Dashboard</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+</head>
+<body>
+<div id="login" style="display:none">
+  <div class="login-card">
+    <div class="login-emoji">📊</div>
+    <h1>Life Dashboard</h1>
+    <p>Your habit tracker and daily journal in one place — with a coach that actually reads them.</p>
+    <button class="primary" onclick="location.href='/auth/google'">Sign in with Google</button>
+    <p class="note" style="margin-top:14px">Read-only access to the Sheet and Doc links you provide. Nothing else.</p>
+  </div>
+</div>
+<div class="topbar">
+  <header>
+    <h1>Life Dashboard</h1>
+    <span id="source-badge" class="badge">loading…</span>
+    <span id="date-badge" class="badge"></span>
+    <span class="spacer"></span>
+    <span id="auth-area"></span>
+    <button id="settings-btn" title="Widgets & data sources">⚙︎ Widgets</button>
+  </header>
+</div>
+<div class="wrap">
+
+  <div id="errors" class="errors"></div>
+
+  <div id="setup-banner" class="card span12" style="display:none;margin-bottom:16px">
+    <h2>Welcome — connect your data</h2>
+    <p class="sub" style="margin-bottom:8px">Paste the links to your habit-tracker Google Sheet and daily-journal Google Doc. The dashboard refreshes from them every time you open it.</p>
+    <button class="primary" onclick="document.getElementById('settings-btn').click()">Add my links</button>
+  </div>
+
+  <div class="grid">
+    <div class="kpis span12" id="kpis" data-widget="kpis"></div>
+
+    <div class="card coach span12" data-widget="coach">
+      <div id="coach"><div class="coach-loading">Thinking about your day<span class="dots"><i>.</i><i>.</i><i>.</i></span></div></div>
+    </div>
+
+    <div class="card coach weekly span12" data-widget="weekly-coach">
+      <div id="weekly-coach"><h2>Weekly Coach</h2><div class="coach-loading">Zooming out on your week<span class="dots"><i>.</i><i>.</i><i>.</i></span></div></div>
+    </div>
+
+    <div class="card span8" data-widget="rhythm">
+      <h2>Day scores &amp; habit completion</h2>
+      <p class="sub">How each day felt (0–10) and the share of habits you hit</p>
+      <div id="rhythm"></div>
+    </div>
+    <div class="card span4" data-widget="today">
+      <h2 id="today-title">Today</h2>
+      <p class="sub" id="today-sub"></p>
+      <div id="today"></div>
+    </div>
+
+    <div class="card span12" data-widget="heatmap">
+      <h2>Habit heatmap</h2>
+      <p class="sub">Share of each habit group you hit, day by day — hover a cell for the ✓/✗ detail</p>
+      <div id="heatmap" class="scroll-x"></div>
+    </div>
+
+    <div class="card span6" data-widget="habit-bars">
+      <h2>Habit completion</h2>
+      <p class="sub">Sorted best → worst, with current streaks</p>
+      <div id="habit-bars"></div>
+    </div>
+    <div class="card span6" data-widget="impact">
+      <h2>What makes a good day</h2>
+      <p class="sub">Avg day score when you did the habit vs when you didn't (early signal — small sample)</p>
+      <div id="impact"></div>
+    </div>
+
+    <div class="card span6" data-widget="people">
+      <h2>People</h2>
+      <p class="sub">Average day score on days spent with each person</p>
+      <div id="people"></div>
+    </div>
+    <div class="card span6" data-widget="places">
+      <h2>Places</h2>
+      <p class="sub">Where your good days happen</p>
+      <div id="places"></div>
+    </div>
+
+    <div class="card span6" data-widget="sleep">
+      <h2>Sleep</h2>
+      <p class="sub">Bedtime vs the midnight target</p>
+      <div id="sleep"></div>
+    </div>
+    <div class="card span6" data-widget="plant">
+      <h2>🌱 Sessions</h2>
+      <p class="sub">Solo vs social sessions per day</p>
+      <div id="plant"></div>
+    </div>
+
+    <div class="card span4" data-widget="wins">
+      <h2>Wins</h2>
+      <p class="sub">Habits at 80%+ hold rate</p>
+      <div id="wins"></div>
+    </div>
+    <div class="card span4" data-widget="focus">
+      <h2>Focus next</h2>
+      <p class="sub">Lowest hold rates — pick one</p>
+      <div id="focus"></div>
+    </div>
+    <div class="card span4" data-widget="weekdays">
+      <h2>Weekday rhythm</h2>
+      <p class="sub">Avg day score by weekday</p>
+      <div id="weekdays"></div>
+    </div>
+
+    <div class="card span12" data-widget="activities">
+      <h2>Activity leaderboard</h2>
+      <p class="sub">Recurring activities ranked by how they rate</p>
+      <div id="activities"></div>
+    </div>
+  </div>
+</div>
+
+<div id="preview-modal">
+  <div class="preview-card">
+    <h2>Did I read your data right?</h2>
+    <p class="sub">Here's the most recent day I found in each source — check it against what you actually logged.</p>
+    <div id="preview-body" class="preview-cols"><p class="coach-loading">Reading your sources<span class="dots"><i>.</i><i>.</i><i>.</i></span></p></div>
+    <div id="preview-errors" class="errors"></div>
+    <div id="format-help" style="display:none">
+      <h3>Expected formats</h3>
+      <p><b>Habit sheet:</b> a header row containing <code>DAY</code>, <code>DATE</code>, then one column per habit with TRUE/FALSE values per day. Dates like <code>7/21</code> or <code>7/21/26</code>.</p>
+      <p><b>Journal doc:</b> one block per day, like:</p>
+      <pre>07/24/26 | 8 | Cambridge
+
+10:30 | Call with Lydia | Home | 8
+3:00 | Softball w/ Cory | Field | 9</pre>
+      <p>That's <code>date | day score (0–10) | city</code>, then one line per activity: <code>time | title | location (optional) | rating (0–10)</code>. Bullets are fine too.</p>
+      <p>Adjust your Sheet/Doc (or the links), then hit <b>Re-check</b>.</p>
+    </div>
+    <div class="preview-actions">
+      <button class="primary" onclick="confirmData()">✓ Yes, that's my data</button>
+      <button onclick="toggleFormatHelp()">Something's off</button>
+      <button onclick="showPreviewModal()">↻ Re-check</button>
+      <button onclick="hidePreviewModal(); document.getElementById('settings-btn').click()">Edit links</button>
+    </div>
+  </div>
+</div>
+
+<div id="drawer-backdrop"></div>
+<aside id="drawer">
+  <div class="drawer-head">
+    <h2>Widgets</h2>
+    <button id="drawer-close" class="icon-btn" title="Close">✕</button>
+  </div>
+  <div class="mode-toggle" id="mode-toggle">
+    <button data-mode="suggested" id="mode-suggested">✨ Suggested</button>
+    <button data-mode="custom" id="mode-custom">Custom</button>
+  </div>
+  <p class="note" id="mode-note"></p>
+  <div id="widget-menu" class="widget-menu"></div>
+  <div class="settings-section">
+    <h3>Data sources</h3>
+    <div id="settings-body"></div>
+  </div>
+</aside>
+
+<div id="tooltip"></div>
+<script src="app.js"></script>
+</body>
+</html>

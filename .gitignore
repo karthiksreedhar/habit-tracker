@@ -1,0 +1,9 @@
+.DS_Store
+.env
+coach-cache.json
+config.json
+google-credentials.json
+node_modules/
+seed-habits.csv
+seed-journal.txt
+tokens.json
