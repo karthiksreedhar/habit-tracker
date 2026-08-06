@@ -22,17 +22,19 @@
     <span id="date-badge" class="badge"></span>
     <span class="spacer"></span>
     <span id="auth-area"></span>
-    <button id="settings-btn" title="Widgets & data sources">⚙︎ Widgets</button>
+    <button id="data-btn" title="Data sources & read check">🔗 Data</button>
+    <button id="settings-btn" title="Widgets">⚙︎ Widgets</button>
+    <button id="signout-btn" style="display:none" onclick="logout()">Sign out</button>
   </header>
 </div>
 <div class="wrap">
 
   <div id="errors" class="errors"></div>
 
-  <div id="setup-banner" class="card span12" style="display:none;margin-bottom:16px">
-    <h2>Welcome — connect your data</h2>
-    <p class="sub" style="margin-bottom:8px">Paste the links to your habit-tracker Google Sheet and daily-journal Google Doc. The dashboard refreshes from them every time you open it.</p>
-    <button class="primary" onclick="document.getElementById('settings-btn').click()">Add my links</button>
+  <div id="setup-banner" style="display:none">
+    <h2>👋 Welcome! First things first —</h2>
+    <p>Connect your habit-tracker Google Sheet and daily-journal Google Doc. Nothing here works until you do.</p>
+    <button onclick="openDataPage(false)">Connect my Sheet + Doc →</button>
   </div>
 
   <div class="grid">
@@ -120,28 +122,40 @@
   </div>
 </div>
 
-<div id="preview-modal">
-  <div class="preview-card">
-    <h2>Did I read your data right?</h2>
-    <p class="sub">Here's the most recent day I found in each source — check it against what you actually logged.</p>
-    <div id="preview-body" class="preview-cols"><p class="coach-loading">Reading your sources<span class="dots"><i>.</i><i>.</i><i>.</i></span></p></div>
-    <div id="preview-errors" class="errors"></div>
-    <div id="format-help" style="display:none">
-      <h3>Expected formats</h3>
-      <p><b>Habit sheet:</b> a header row containing <code>DAY</code>, <code>DATE</code>, then one column per habit with TRUE/FALSE values per day. Dates like <code>7/21</code> or <code>7/21/26</code>.</p>
-      <p><b>Journal doc:</b> one block per day, like:</p>
-      <pre>07/24/26 | 8 | Cambridge
+<div id="data-page">
+  <div class="data-card">
+    <div class="drawer-head">
+      <h2>🔗 Your data</h2>
+      <button id="data-close" class="icon-btn" title="Close">✕</button>
+    </div>
+    <p class="note" style="margin-bottom:14px">Link your habit-tracker Google Sheet and daily-journal Google Doc. The dashboard re-reads both every time you open it — just keep logging in your usual places.</p>
+    <div class="field"><label>Habit tracker — Google Sheet URL</label>
+      <input id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/…"></div>
+    <div class="field"><label>Daily journal — Google Doc URL</label>
+      <input id="doc-url" placeholder="https://docs.google.com/document/d/…"></div>
+    <button class="primary" onclick="saveAndCheck()">Save &amp; check my data</button>
+
+    <div id="preview-section" style="display:none">
+      <h3 class="preview-title">Did I read your data right?</h3>
+      <p class="sub">The most recent day I found in each source — check it against what you actually logged.</p>
+      <div id="preview-body" class="preview-cols"></div>
+      <div id="preview-errors" class="errors"></div>
+      <div id="format-help" style="display:none">
+        <h3>Expected formats</h3>
+        <p><b>Habit sheet:</b> a header row containing <code>DAY</code>, <code>DATE</code>, then one column per habit with TRUE/FALSE values per day. Dates like <code>7/21</code> or <code>7/21/26</code>.</p>
+        <p><b>Journal doc:</b> one block per day, like:</p>
+        <pre>07/24/26 | 8 | Cambridge
 
 10:30 | Call with Lydia | Home | 8
 3:00 | Softball w/ Cory | Field | 9</pre>
-      <p>That's <code>date | day score (0–10) | city</code>, then one line per activity: <code>time | title | location (optional) | rating (0–10)</code>. Bullets are fine too.</p>
-      <p>Adjust your Sheet/Doc (or the links), then hit <b>Re-check</b>.</p>
-    </div>
-    <div class="preview-actions">
-      <button class="primary" onclick="confirmData()">✓ Yes, that's my data</button>
-      <button onclick="toggleFormatHelp()">Something's off</button>
-      <button onclick="showPreviewModal()">↻ Re-check</button>
-      <button onclick="hidePreviewModal(); document.getElementById('settings-btn').click()">Edit links</button>
+        <p>That's <code>date | day score (0–10) | city</code>, then one line per activity: <code>time | title | location (optional) | rating (0–10)</code>. Bullets are fine too.</p>
+        <p>Adjust your Sheet/Doc (or the links above), then hit <b>Re-check</b>.</p>
+      </div>
+      <div class="preview-actions">
+        <button class="primary" onclick="confirmData()">✓ Yes, that's my data</button>
+        <button onclick="toggleFormatHelp()">Something's off</button>
+        <button onclick="runPreview()">↻ Re-check</button>
+      </div>
     </div>
   </div>
 </div>
@@ -158,10 +172,6 @@
   </div>
   <p class="note" id="mode-note"></p>
   <div id="widget-menu" class="widget-menu"></div>
-  <div class="settings-section">
-    <h3>Data sources</h3>
-    <div id="settings-body"></div>
-  </div>
 </aside>
 
 <div id="tooltip"></div>

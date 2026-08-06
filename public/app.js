@@ -36,7 +36,7 @@ async function boot() {
     return;
   }
   renderAuthArea();
-  renderSettings();
+  setupDataPage();
   setupDrawer();
   hydrateWidgetState();
   renderWidgetMenu();
@@ -47,7 +47,7 @@ async function boot() {
   const data = await res.json();
   if (data.error) { $('errors').textContent = 'Failed to build dashboard: ' + data.error; return; }
   $('setup-banner').style.display = data.needsSetup ? '' : 'none';
-  if (data.needsConfirm) showPreviewModal();
+  if (data.needsConfirm) openDataPage(true);
   if (data.needsSetup) {
     $('coach').innerHTML = '<h2>Daily Coach</h2><p class="note">Connect your Sheet + Doc first — then the coach reads them.</p>';
     $('weekly-coach').innerHTML = '<h2>Weekly Coach</h2><p class="note">Connect your data to get weekly goals.</p>';
@@ -521,44 +521,39 @@ function renderAuthArea() {
   el.innerHTML = STATUS.loggedIn
     ? `<span class="badge">${esc(STATUS.email || 'signed in')}</span>`
     : `<button class="primary" onclick="location.href='/auth/google'">Sign in with Google</button>`;
+  if (STATUS.loggedIn) $('signout-btn').style.display = '';
 }
 
-function renderSettings() {
-  const s = STATUS;
-  let html = '';
-  if (s.demo) {
-    html += `<p class="note">Running in <b>local demo mode</b> (seed CSV + journal). Set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET to enable Google sign-in — see README.md.</p>`;
-  } else {
-    html += `<p class="note">Signed in as <b>${esc(s.email || '')}</b>. <button onclick="logout()">Sign out</button></p>
-      <p class="note">Your dashboard refreshes from these links every time you open it.</p>`;
-  }
-  html += `
-    <div class="field"><label>Habit tracker — Google Sheet URL</label>
-      <input id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/…" value="${esc(s.sheetUrl || '')}"></div>
-    <div class="field"><label>Daily journal — Google Doc URL</label>
-      <input id="doc-url" placeholder="https://docs.google.com/document/d/…" value="${esc(s.docUrl || '')}"></div>
-    <button class="primary" onclick="saveConfig()">Save &amp; refresh</button>`;
-  $('settings-body').innerHTML = html;
+// ---------- data page (links + read verification) ----------
+
+function setupDataPage() {
+  $('data-btn').onclick = () => openDataPage(!!(STATUS.sheetUrl || STATUS.docUrl));
+  $('data-close').onclick = closeDataPage;
+  $('sheet-url').value = STATUS.sheetUrl || '';
+  $('doc-url').value = STATUS.docUrl || '';
 }
 
-async function saveConfig() {
+// withCheck: also run the parse preview right away (for users who already
+// have links and want to verify reads)
+function openDataPage(withCheck) {
+  $('data-page').classList.add('open');
+  if (withCheck) runPreview();
+  else $('preview-section').style.display = 'none';
+}
+
+function closeDataPage() { $('data-page').classList.remove('open'); }
+
+async function saveAndCheck() {
   await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sheetUrl: $('sheet-url').value.trim(), docUrl: $('doc-url').value.trim() }),
   });
-  if (STATUS.demo) { location.reload(); return; }
-  // Close the drawer and show what we parsed, so the user can confirm
-  $('drawer').classList.remove('open');
-  $('drawer-backdrop').classList.remove('open');
-  showPreviewModal();
+  runPreview();
 }
 
-// ---------- data preview / confirm ----------
-
-async function showPreviewModal() {
-  const modal = $('preview-modal');
-  modal.classList.add('open');
+async function runPreview() {
+  $('preview-section').style.display = '';
   $('preview-body').innerHTML = '<p class="coach-loading">Reading your sources<span class="dots"><i>.</i><i>.</i><i>.</i></span></p>';
   $('preview-errors').textContent = '';
   try {
@@ -602,7 +597,6 @@ async function showPreviewModal() {
   }
 }
 
-function hidePreviewModal() { $('preview-modal').classList.remove('open'); }
 function toggleFormatHelp() {
   const el = $('format-help');
   el.style.display = el.style.display === 'none' ? '' : 'none';
@@ -671,8 +665,14 @@ function bedtimeLabel(min) {
 // One shared normalized scale: 0-10 day score on the left ≡ 0-100% completion
 // on the right (both span the full plot height linearly).
 function renderRhythm(habits, journal) {
-  const days = habits.days;
-  if (!days.length) { $('rhythm').innerHTML = '<p class="note">No data</p>'; return; }
+  // With no habit sheet, fall back to journal days so the score line still shows
+  const haveHabits = habits.days.length > 0;
+  const days = haveHabits ? habits.days : journal.map((d) => ({
+    date: d.date,
+    weekday: new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(),
+    done: 0, total: 0, completion: 0,
+  }));
+  if (!days.length) { $('rhythm').innerHTML = '<p class="note">No data yet — connect your Sheet and Doc (🔗 Data).</p>'; return; }
   const jBy = new Map(journal.map((d) => [d.date, d]));
   const W = 820, H = 240, padL = 30, padR = 40, padT = 16, padB = 26;
   const n = days.length;
@@ -684,14 +684,16 @@ function renderRhythm(habits, journal) {
   for (const v of [0, 0.5, 1]) {
     g += `<line x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
     g += `<text x="${padL - 6}" y="${y(v) + 3}" text-anchor="end" class="axis-label">${v * 10}</text>`;
-    g += `<text x="${W - padR + 6}" y="${y(v) + 3}" class="axis-label">${v * 100}%</text>`;
+    if (haveHabits) g += `<text x="${W - padR + 6}" y="${y(v) + 3}" class="axis-label">${v * 100}%</text>`;
   }
 
-  // completion bars (behind)
+  // date labels always; completion bars only when a habit sheet exists
   for (let i = 0; i < n; i++) {
     const d = days[i];
-    const h = y(0) - y(d.completion);
-    g += `<rect x="${x(i) - bw / 2}" y="${y(d.completion)}" width="${bw}" height="${Math.max(h, 1)}" rx="6" fill="var(--seq-2)" data-tt="${tt(`${fmtDate(d.date)} (${d.weekday})`, [`Habits: <b>${d.done}/${d.total}</b> (${Math.round(d.completion * 100)}%)`])}"/>`;
+    if (haveHabits) {
+      const h = y(0) - y(d.completion);
+      g += `<rect x="${x(i) - bw / 2}" y="${y(d.completion)}" width="${bw}" height="${Math.max(h, 1)}" rx="6" fill="var(--seq-2)" data-tt="${tt(`${fmtDate(d.date)} (${d.weekday})`, [`Habits: <b>${d.done}/${d.total}</b> (${Math.round(d.completion * 100)}%)`])}"/>`;
+    }
     g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" class="axis-label">${fmtDate(d.date)}</text>`;
   }
   g += `<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" stroke="var(--baseline)"/>`;
@@ -706,7 +708,9 @@ function renderRhythm(habits, journal) {
   const mx = Math.max(...scores), mn = Math.min(...scores);
   for (const p of pts) {
     const city = p.j.city ? ` · ${p.j.city}` : '';
-    g += `<circle cx="${x(p.i)}" cy="${y(p.j.score / 10)}" r="5" fill="var(--green-dark)" stroke="var(--surface)" stroke-width="2" data-tt="${tt(`${fmtDate(p.d.date)} (${p.d.weekday})${city}`, [`Day score: <b>${p.j.score}</b>`, `Habits: ${p.d.done}/${p.d.total} (${Math.round(p.d.completion * 100)}%)`])}"/>`;
+    const rows = [`Day score: <b>${p.j.score}</b>`];
+    if (haveHabits) rows.push(`Habits: ${p.d.done}/${p.d.total} (${Math.round(p.d.completion * 100)}%)`);
+    g += `<circle cx="${x(p.i)}" cy="${y(p.j.score / 10)}" r="5" fill="var(--green-dark)" stroke="var(--surface)" stroke-width="2" data-tt="${tt(`${fmtDate(p.d.date)} (${p.d.weekday})${city}`, rows)}"/>`;
     if (p.j.score === mx || p.j.score === mn) {
       g += `<text x="${x(p.i)}" y="${y(p.j.score / 10) - 10}" text-anchor="middle" class="val-label">${p.j.score}</text>`;
     }
@@ -715,7 +719,7 @@ function renderRhythm(habits, journal) {
   $('rhythm').innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg>
     <div class="legend">
       <span class="key"><span class="swatch" style="background:var(--green-dark);border-radius:999px"></span>day score (0–10)</span>
-      <span class="key"><span class="swatch" style="background:var(--seq-2)"></span>habit completion (0–100%)</span>
+      ${haveHabits ? '<span class="key"><span class="swatch" style="background:var(--seq-2)"></span>habit completion (0–100%)</span>' : ''}
     </div>`;
 }
 
@@ -729,9 +733,9 @@ function renderToday(habits, journal) {
     (j.score !== null ? `day score ${j.score}` : 'no day score yet') +
     (j.city ? ` · ${j.city}` : '') +
     (hd ? ` · ${hd.done}/${hd.total} habits` : '');
-  $('today').innerHTML = j.activities.map((a) =>
+  $('today').innerHTML = j.activities.length ? j.activities.map((a) =>
     `<div class="today-act"><span class="t">${esc(a.time)}</span><span>${esc(a.title)}${a.location ? ` <span class="note">· ${esc(a.location)}</span>` : ''}</span><span class="r">${a.rating ?? ''}</span></div>`
-  ).join('');
+  ).join('') : '<p class="note">No activities logged for this day yet.</p>';
 }
 
 // ---------- heatmap ----------
@@ -739,7 +743,7 @@ function renderToday(habits, journal) {
 // of that group's habits completed that day (a continuous 0-100% value).
 function renderHeatmap(habits) {
   const days = habits.days;
-  if (!days.length) return;
+  if (!days.length) { $('heatmap').innerHTML = '<p class="note">No habit data yet — connect your Sheet (🔗 Data).</p>'; return; }
   const CATS = [
     ['Fitness', /cardio|lift|outside|fresh air/i],
     ['Diet', /protein|sugar/i],
@@ -797,6 +801,7 @@ const truncate = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 // ---------- habit bars ----------
 function renderHabitBars(perHabit) {
+  if (!perHabit.length) { $('habit-bars').innerHTML = '<p class="note">No habits found in the sheet yet.</p>'; return; }
   const sorted = [...perHabit].sort((a, b) => b.rate - a.rate);
   $('habit-bars').innerHTML = sorted.map((h) => {
     const pct = Math.round(h.rate * 100);
@@ -858,6 +863,10 @@ function renderPeople(people) {
 
 // ---------- places ----------
 function renderPlaces(cities, split) {
+  if (!cities.length && !split.home.n && !split.out.n) {
+    $('places').innerHTML = '<p class="note">No locations in the journal yet — add a city after the day score, or locations to activities.</p>';
+    return;
+  }
   let html = '<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-bottom:10px">';
   for (const c of cities) {
     html += `<div class="tile"><div class="label">${esc(c.city)}</div><div class="value">${c.avgScore ?? '—'}</div><div class="delta">${c.days} day${c.days === 1 ? '' : 's'} · avg score</div></div>`;
@@ -905,7 +914,7 @@ function renderSleep(sleep, kpis) {
 // ---------- plant ----------
 function renderPlant(plant) {
   const days = plant.daily;
-  if (!days.length) { $('plant').innerHTML = '<p class="note">No entries.</p>'; return; }
+  if (!days.length || !plant.total) { $('plant').innerHTML = '<p class="note">No 🌱 sessions in the journal — nothing to chart.</p>'; return; }
   const W = 520, H = 170, padL = 30, padR = 12;
   const maxC = Math.max(...days.map((d) => d.count), 3);
   const y = (v) => 16 + (1 - v / maxC) * (H - 50);
@@ -939,7 +948,7 @@ function renderPlant(plant) {
       <span class="key"><span class="swatch" style="background:var(--green)"></span>solo</span>
       <span class="key"><span class="swatch" style="background:var(--blue)"></span>with people</span>
     </div>
-    <p class="note" style="margin-top:8px">${plant.total} sessions total · ${plant.soloShare}% solo. ${cmp}</p>`;
+    <p class="note" style="margin-top:8px">${plant.total} sessions total${plant.soloShare !== null ? ` · ${plant.soloShare}% solo` : ''}. ${cmp}</p>`;
 }
 
 // ---------- wins / focus ----------
@@ -974,6 +983,7 @@ function renderWeekdays(weekdays) {
 
 // ---------- activities ----------
 function renderActivities(acts) {
+  if (!acts.length) { $('activities').innerHTML = '<p class="note">No rated activities in the journal yet.</p>'; return; }
   // Strictly rating-ordered (ties broken by how often it happens)
   const rows = [...acts].sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, 14);
   $('activities').innerHTML = `<table>
