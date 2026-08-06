@@ -564,7 +564,7 @@ async function runPreview() {
     const h = p.habits;
     html += `<div class="preview-col"><h3>Habit tracker (Sheet)</h3>`;
     if (h.last) {
-      html += `<div class="pdate">${fmtDate(h.last.date)} (${esc(h.last.weekday)}) — latest filled day</div>
+      html += `<div class="pdate">${fmtDate(h.last.date)} (${esc(h.last.weekday)}) — ${esc(h.label)}</div>
         <div class="note" style="margin-bottom:6px">${h.habitCount} habits detected · ${h.daysParsed} day(s) parsed · ${h.last.done.length}/${h.habitCount} done that day</div>
         <div class="preview-list">` +
         h.last.done.map((n) => `<div class="ok">✓ ${esc(n)}</div>`).join('') +
@@ -578,7 +578,7 @@ async function runPreview() {
     const j = p.journal;
     html += `<div class="preview-col"><h3>Daily journal (Doc)</h3>`;
     if (j.last) {
-      html += `<div class="pdate">${fmtDate(j.last.date)}${j.last.score !== null ? ` — day score ${j.last.score}` : ''}${j.last.city ? ` · ${esc(j.last.city)}` : ''}</div>
+      html += `<div class="pdate">${fmtDate(j.last.date)} — ${esc(j.label)}${j.last.score !== null ? ` · day score ${j.last.score}` : ''}${j.last.city ? ` · ${esc(j.last.city)}` : ''}</div>
         <div class="note" style="margin-bottom:6px">${j.daysParsed} day(s) parsed · ${j.last.activities.length} activities on the latest day</div>
         <div class="preview-list">` +
         j.last.activities.map((a) =>

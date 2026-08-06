@@ -220,13 +220,28 @@ app.post('/api/config', async (req, res) => {
 app.get('/api/preview', async (req, res) => {
   try {
     const data = await loadDashboardData(req);
-    const lastH = data.habits.days[data.habits.days.length - 1] || null;
-    const lastJ = data.journal[data.journal.length - 1] || null;
+    // Check against the previous day, not today — yesterday's log is complete,
+    // today's usually isn't. Fall back to the most recent completed day.
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    const yesterdayKey = y.toISOString().slice(0, 10);
+    const pick = (list, getDate) => {
+      if (!list.length) return { day: null, label: '' };
+      const prev = list.filter((d) => getDate(d) < todayKey);
+      const day = prev.length ? prev[prev.length - 1] : list[list.length - 1];
+      const label = getDate(day) === yesterdayKey ? 'yesterday'
+        : getDate(day) < todayKey ? 'most recent completed day'
+        : 'latest day (today — still in progress)';
+      return { day, label };
+    };
+    const { day: lastH, label: labelH } = pick(data.habits.days, (d) => d.date);
+    const { day: lastJ, label: labelJ } = pick(data.journal, (d) => d.date);
     res.json({
       errors: data.source.errors,
       habits: {
         daysParsed: data.habits.days.length,
         habitCount: data.habits.habitNames.length,
+        label: labelH,
         last: lastH ? {
           date: lastH.date,
           weekday: lastH.weekday,
@@ -236,6 +251,7 @@ app.get('/api/preview', async (req, res) => {
       },
       journal: {
         daysParsed: data.journal.length,
+        label: labelJ,
         last: lastJ ? {
           date: lastJ.date,
           score: lastJ.score,
