@@ -166,10 +166,15 @@
     <div class="drawer-head no-print">
       <h2>📄 Life Report</h2>
       <div style="display:flex;gap:8px;align-items:center">
-        <button id="report-generate">Generate new</button>
         <button onclick="window.print()">Print / PDF</button>
         <button id="report-close" class="icon-btn" title="Close">✕</button>
       </div>
+    </div>
+    <div class="report-controls no-print">
+      <label>From <input type="date" id="report-start"></label>
+      <label>To <input type="date" id="report-end"></label>
+      <button class="primary" id="report-generate">Generate report</button>
+      <button id="report-reset" title="Back to all logged data">All data</button>
     </div>
     <div id="report-body"></div>
   </div>

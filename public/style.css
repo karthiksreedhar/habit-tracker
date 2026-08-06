@@ -321,12 +321,31 @@ tr:last-child td { border-bottom: none; }
   max-width: 820px; width: 100%; padding: 22px 34px 34px;
   animation: pop-in 0.45s var(--bounce) both;
 }
+.report-controls {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  background: var(--page); border: 1px solid var(--grid); border-radius: 16px;
+  padding: 10px 14px; margin-bottom: 16px;
+}
+.report-controls label { font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
+.report-controls input[type="date"] {
+  font: inherit; font-size: 13px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--ink);
+}
 .report-working { padding: 30px 0; }
 .report-empty { padding: 26px 0; }
 .report-head { border-bottom: 3px solid var(--green); padding-bottom: 14px; margin: 6px 0 18px; }
 .report-head h1 { font-size: 27px; line-height: 1.25; margin: 0 0 6px; }
 .report-period { color: var(--muted); font-size: 13px; margin: 0; }
-.report-exec { font-size: 15.5px; line-height: 1.65; margin: 0 0 20px; }
+.report-takeaways { margin: 0 0 22px; padding: 0; list-style: none; }
+.report-takeaways li {
+  position: relative; padding-left: 24px; margin-bottom: 10px;
+  font-size: 15px; line-height: 1.6;
+}
+.report-takeaways li::before {
+  content: ''; position: absolute; left: 4px; top: 9px;
+  width: 8px; height: 8px; border-radius: 999px; background: var(--green);
+}
 
 .report-snapshot { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 22px; }
 .snap { background: var(--page); border: 1px solid var(--grid); border-radius: 16px; padding: 12px 14px; }

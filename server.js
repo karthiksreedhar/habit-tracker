@@ -492,11 +492,18 @@ app.post('/api/coach/weekly/fail', async (req, res) => {
   }
 });
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 app.get('/api/report', async (req, res) => {
   try {
     const data = await loadDashboardData(req);
     if (!hasData(data)) return res.json({ error: 'Connect your Sheet and Doc first (🔗 Data).' });
-    res.json(await getReport(req.userEmail, { ...data, force: req.query.generate === '1' }));
+    res.json(await getReport(req.userEmail, {
+      ...data,
+      start: ISO_DATE.test(req.query.start || '') ? req.query.start : null,
+      end: ISO_DATE.test(req.query.end || '') ? req.query.end : null,
+      force: req.query.generate === '1',
+    }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

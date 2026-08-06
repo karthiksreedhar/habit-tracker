@@ -529,10 +529,27 @@ function renderAuthArea() {
 
 let REPORT = null;
 
+let REPORT_BOUNDS = null;
+
 function setupReportPage() {
   $('report-btn').onclick = () => openReport();
   $('report-close').onclick = () => $('report-page').classList.remove('open');
   $('report-generate').onclick = () => loadReport(true);
+  $('report-reset').onclick = () => { applyBoundsToInputs(); loadReport(true); };
+}
+
+// Default range = every day you've logged, through today
+function applyBoundsToInputs() {
+  if (!REPORT_BOUNDS) return;
+  if (REPORT_BOUNDS.dataStart) {
+    $('report-start').value = REPORT_BOUNDS.dataStart;
+    $('report-start').min = REPORT_BOUNDS.dataStart;
+  }
+  const end = REPORT_BOUNDS.today || REPORT_BOUNDS.dataEnd;
+  if (end) {
+    $('report-end').value = end;
+    $('report-end').max = end;
+  }
 }
 
 function openReport() {
@@ -542,23 +559,38 @@ function openReport() {
 
 async function loadReport(generate) {
   const el = $('report-body');
+  const start = $('report-start').value;
+  const end = $('report-end').value;
+  const qs = new URLSearchParams();
+  if (generate) {
+    qs.set('generate', '1');
+    if (start) qs.set('start', start);
+    if (end) qs.set('end', end);
+  }
+  const span = start && end ? Math.round((new Date(end) - new Date(start)) / 864e5) + 1 : null;
   el.innerHTML = generate
-    ? `<div class="report-working"><div class="coach-loading">Reading two weeks of your life<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>
+    ? `<div class="report-working"><div class="coach-loading">Reading ${span ? span + ' days' : 'your logs'}<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>
        <p class="note">Crunching the numbers, then writing it up. This takes a minute or two — leave the tab open.</p></div>`
     : `<div class="coach-loading">Loading<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>`;
   try {
-    const r = await (await fetch('/api/report' + (generate ? '?generate=1' : ''))).json();
+    const r = await (await fetch('/api/report' + (qs.toString() ? '?' + qs : ''))).json();
+    if (r.bounds) {
+      REPORT_BOUNDS = r.bounds;
+      if (!$('report-start').value) applyBoundsToInputs();
+    }
     if (r.error) {
       el.innerHTML = `<p class="note">${esc(r.error)}</p>
         ${/Connect your Sheet/.test(r.error) ? '' : '<button class="primary" onclick="loadReport(true)">Try again</button>'}`;
       return;
     }
     if (!r.title) {
-      el.innerHTML = `<div class="report-empty"><p>No report yet for this fortnight.</p>
+      el.innerHTML = `<div class="report-empty"><p>No report yet — the range above covers everything you've logged.</p>
         <button class="primary" onclick="loadReport(true)">Generate my first report</button></div>`;
       return;
     }
     REPORT = r;
+    if (r.periodStart) $('report-start').value = r.periodStart;
+    if (r.periodEnd) $('report-end').value = r.periodEnd;
     renderReport(r);
   } catch (e) {
     el.innerHTML = `<p class="note">Report unavailable: ${esc(e.message)}</p>`;
@@ -574,7 +606,11 @@ function renderReport(r) {
       <p class="report-period">${esc(period)} · ${r.daysLogged} day${r.daysLogged === 1 ? '' : 's'} logged · generated ${new Date(r.generatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</p>
     </div>`;
 
-  html += `<p class="report-exec">${esc(r.executive_summary)}</p>`;
+  const takeaways = r.key_takeaways || (r.executive_summary ? [r.executive_summary] : []);
+  if (takeaways.length) {
+    html += `<ul class="report-takeaways">` +
+      takeaways.map((t) => `<li>${esc(t)}</li>`).join('') + `</ul>`;
+  }
 
   if (r.snapshot && r.snapshot.length) {
     html += `<div class="report-snapshot">` + r.snapshot.map((s) =>
