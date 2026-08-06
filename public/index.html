@@ -22,6 +22,7 @@
     <span id="date-badge" class="badge"></span>
     <span class="spacer"></span>
     <span id="auth-area"></span>
+    <button id="report-btn" title="Your fortnightly life report">📄 Report</button>
     <button id="data-btn" title="Data sources & read check">🔗 Data</button>
     <button id="settings-btn" title="Widgets">⚙︎ Widgets</button>
     <button id="signout-btn" style="display:none" onclick="logout()">Sign out</button>
@@ -78,7 +79,7 @@
 
     <div class="card span6" data-widget="people">
       <h2>People</h2>
-      <p class="sub">Average day score on days spent with each person</p>
+      <p class="sub">Ranked by how your hangs with them rate</p>
       <div id="people"></div>
     </div>
     <div class="card span6" data-widget="places">
@@ -116,7 +117,7 @@
 
     <div class="card span12" data-widget="activities">
       <h2>Activity leaderboard</h2>
-      <p class="sub">Recurring activities ranked by how they rate</p>
+      <p class="sub">Things you do repeatedly, ranked by how they actually rate</p>
       <div id="activities"></div>
     </div>
   </div>
@@ -157,6 +158,20 @@
         <button onclick="runPreview()">↻ Re-check</button>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="report-page">
+  <div class="report-card">
+    <div class="drawer-head no-print">
+      <h2>📄 Life Report</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="report-generate">Generate new</button>
+        <button onclick="window.print()">Print / PDF</button>
+        <button id="report-close" class="icon-btn" title="Close">✕</button>
+      </div>
+    </div>
+    <div id="report-body"></div>
   </div>
 </div>
 

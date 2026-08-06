@@ -37,6 +37,7 @@ async function boot() {
   }
   renderAuthArea();
   setupDataPage();
+  setupReportPage();
   setupDrawer();
   hydrateWidgetState();
   renderWidgetMenu();
@@ -524,6 +525,100 @@ function renderAuthArea() {
   if (STATUS.loggedIn) $('signout-btn').style.display = '';
 }
 
+// ---------- life report ----------
+
+let REPORT = null;
+
+function setupReportPage() {
+  $('report-btn').onclick = () => openReport();
+  $('report-close').onclick = () => $('report-page').classList.remove('open');
+  $('report-generate').onclick = () => loadReport(true);
+}
+
+function openReport() {
+  $('report-page').classList.add('open');
+  if (!REPORT) loadReport(false);
+}
+
+async function loadReport(generate) {
+  const el = $('report-body');
+  el.innerHTML = generate
+    ? `<div class="report-working"><div class="coach-loading">Reading two weeks of your life<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>
+       <p class="note">Crunching the numbers, then writing it up. This takes a minute or two — leave the tab open.</p></div>`
+    : `<div class="coach-loading">Loading<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>`;
+  try {
+    const r = await (await fetch('/api/report' + (generate ? '?generate=1' : ''))).json();
+    if (r.error) {
+      el.innerHTML = `<p class="note">${esc(r.error)}</p>
+        ${/Connect your Sheet/.test(r.error) ? '' : '<button class="primary" onclick="loadReport(true)">Try again</button>'}`;
+      return;
+    }
+    if (!r.title) {
+      el.innerHTML = `<div class="report-empty"><p>No report yet for this fortnight.</p>
+        <button class="primary" onclick="loadReport(true)">Generate my first report</button></div>`;
+      return;
+    }
+    REPORT = r;
+    renderReport(r);
+  } catch (e) {
+    el.innerHTML = `<p class="note">Report unavailable: ${esc(e.message)}</p>`;
+  }
+}
+
+const CONF_LABEL = { strong: 'strong signal', moderate: 'moderate', tentative: 'tentative' };
+
+function renderReport(r) {
+  const period = `${fmtDate(r.periodStart)} – ${fmtDate(r.periodEnd)}`;
+  let html = `<div class="report-head">
+      <h1>${esc(r.title)}</h1>
+      <p class="report-period">${esc(period)} · ${r.daysLogged} day${r.daysLogged === 1 ? '' : 's'} logged · generated ${new Date(r.generatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</p>
+    </div>`;
+
+  html += `<p class="report-exec">${esc(r.executive_summary)}</p>`;
+
+  if (r.snapshot && r.snapshot.length) {
+    html += `<div class="report-snapshot">` + r.snapshot.map((s) =>
+      `<div class="snap"><div class="snap-label">${esc(s.label)}</div><div class="snap-value">${esc(s.value)}</div><div class="snap-note">${esc(s.note)}</div></div>`
+    ).join('') + `</div>`;
+  }
+
+  if (r.since_last_report) {
+    html += `<div class="report-since"><h3>Since your last report</h3><p>${esc(r.since_last_report)}</p></div>`;
+  }
+
+  html += (r.sections || []).map((s, i) => `
+    <section class="report-section">
+      <h2><span class="sec-num">${i + 1}</span>${esc(s.heading)}</h2>
+      <p class="sec-summary">${esc(s.summary)}</p>
+      ${(s.findings || []).map((f) => `
+        <div class="finding">
+          <div class="finding-claim">${esc(f.claim)}</div>
+          <div class="finding-evidence">${esc(f.evidence)}</div>
+          <span class="conf conf-${esc(f.confidence)}">${esc(CONF_LABEL[f.confidence] || f.confidence)}</span>
+        </div>`).join('')}
+    </section>`).join('');
+
+  if (r.experiments && r.experiments.length) {
+    html += `<section class="report-section"><h2><span class="sec-num">🧪</span>Try this fortnight</h2>` +
+      r.experiments.map((e) => `
+        <div class="finding">
+          <div class="finding-claim">${esc(e.text)}</div>
+          <div class="finding-evidence">${esc(e.rationale)}</div>
+          <div class="finding-measure">Measure: ${esc(e.how_to_measure)}</div>
+        </div>`).join('') + `</section>`;
+  }
+
+  if (r.open_questions && r.open_questions.length) {
+    html += `<section class="report-section"><h2><span class="sec-num">?</span>Open questions</h2>
+      <ul class="report-questions">${r.open_questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ul></section>`;
+  }
+
+  if (r.history && r.history.length > 1) {
+    html += `<p class="note no-print" style="margin-top:20px">${r.history.length} reports saved · previous: ${r.history.slice(1, 4).map((h) => esc(fmtDate(h.periodStart)) + '–' + esc(fmtDate(h.periodEnd))).join(', ')}</p>`;
+  }
+  $('report-body').innerHTML = html;
+}
+
 // ---------- data page (links + read verification) ----------
 
 function setupDataPage() {
@@ -563,6 +658,10 @@ async function runPreview() {
 
     const h = p.habits;
     html += `<div class="preview-col"><h3>Habit tracker (Sheet)</h3>`;
+    if (h.tab) {
+      const many = h.tabs && h.tabs.length > 1;
+      html += `<div class="note" style="margin-bottom:6px">Reading tab <b>${esc(h.tab)}</b>${many ? ` of ${h.tabs.length}${h.tabPickedBy === 'link' ? ' (from your link)' : ` — if that's not yours, paste the URL while your own tab is open`}` : ''}</div>`;
+    }
     if (h.last) {
       html += `<div class="pdate">${fmtDate(h.last.date)} (${esc(h.last.weekday)}) — ${esc(h.label)}</div>
         <div class="note" style="margin-bottom:6px">${h.habitCount} habits detected · ${h.daysParsed} day(s) parsed · ${h.last.done.length}/${h.habitCount} done that day</div>
@@ -844,19 +943,23 @@ function renderImpact(impact) {
 
 // ---------- people ----------
 function renderPeople(people) {
-  // Ordered by how good days with them are, best first
-  const top = people.filter((p) => p.days >= 1)
-    .sort((a, b) => (b.avgDayScore ?? -1) - (a.avgDayScore ?? -1) || b.acts - a.acts)
+  // Repeat company only — one hang isn't a pattern. Ranked by how those hangs rate.
+  const top = people.filter((p) => p.acts >= 2)
+    .sort((a, b) => (b.avgActRating ?? -1) - (a.avgActRating ?? -1) || b.acts - a.acts)
     .slice(0, 10);
-  if (!top.length) { $('people').innerHTML = '<p class="note">No people detected yet.</p>'; return; }
-  $('people').innerHTML = `<table><tr><th>Person</th><th></th><th class="num">Avg day</th><th class="num">Avg hang</th><th class="num">Hangs</th></tr>` +
+  if (!top.length) {
+    const once = people.length;
+    $('people').innerHTML = `<p class="note">${once ? `No one logged twice yet — ${once} ${once === 1 ? 'person appears' : 'people appear'} once so far.` : 'No people detected yet.'}</p>`;
+    return;
+  }
+  $('people').innerHTML = `<table><tr><th>Person</th><th></th><th class="num">Avg hang</th><th class="num">Avg day</th><th class="num">Hangs</th></tr>` +
     top.map((p) => {
-      const w = p.avgDayScore !== null ? Math.max(p.avgDayScore * 10, 2) : 0;
+      const w = p.avgActRating !== null ? Math.max(p.avgActRating * 10, 2) : 0;
       return `<tr data-tt="${tt(p.name, [`${p.acts} activities across ${p.days} day(s)`, p.avgDayScore !== null ? `Avg day score together: <b>${p.avgDayScore}</b>` : '', p.avgActRating !== null ? `Avg rating of those hangs: <b>${p.avgActRating}</b>` : ''])}">
         <td>${esc(p.name)}</td>
         <td style="width:38%"><span class="rowbar"><span class="track"><span class="fill" style="width:${w}%;background:var(--blue)"></span></span></span></td>
-        <td class="num"><b>${p.avgDayScore ?? '—'}</b></td>
-        <td class="num">${p.avgActRating ?? '—'}</td>
+        <td class="num"><b>${p.avgActRating ?? '—'}</b></td>
+        <td class="num">${p.avgDayScore ?? '—'}</td>
         <td class="num">${p.acts}</td></tr>`;
     }).join('') + `</table>`;
 }
@@ -982,17 +1085,30 @@ function renderWeekdays(weekdays) {
 }
 
 // ---------- activities ----------
+// Things you actually repeat, ranked by how they rate. One-offs are noise here
+// (a single 10 isn't a pattern), so they get one compact line underneath.
 function renderActivities(acts) {
   if (!acts.length) { $('activities').innerHTML = '<p class="note">No rated activities in the journal yet.</p>'; return; }
-  // Strictly rating-ordered (ties broken by how often it happens)
-  const rows = [...acts].sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, 14);
-  $('activities').innerHTML = `<table>
-    <tr><th>Activity</th><th></th><th class="num">Avg rating</th><th class="num">Times</th></tr>` +
-    rows.map((a) => `<tr>
-      <td>${esc(a.title)}</td>
-      <td style="width:45%"><span class="rowbar"><span class="track"><span class="fill" style="width:${a.avgRating * 10}%;background:var(--green)"></span></span></span></td>
-      <td class="num"><b>${a.avgRating}</b></td><td class="num">${a.n}</td></tr>`).join('') +
-    `</table>`;
+  const recurring = acts.filter((a) => a.n >= 2).sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, 12);
+  const oneOffs = acts.filter((a) => a.n === 1).sort((a, b) => b.avgRating - a.avgRating);
+
+  let html = '';
+  if (recurring.length) {
+    html += `<table>
+      <tr><th>Activity</th><th></th><th class="num">Avg rating</th><th class="num">Times</th></tr>` +
+      recurring.map((a) => `<tr>
+        <td>${esc(a.title)}</td>
+        <td style="width:45%"><span class="rowbar"><span class="track"><span class="fill" style="width:${a.avgRating * 10}%;background:var(--green)"></span></span></span></td>
+        <td class="num"><b>${a.avgRating}</b></td><td class="num">${a.n}</td></tr>`).join('') +
+      `</table>`;
+  } else {
+    html += `<p class="note">Nothing repeated yet — keep logging and the pattern will show up here.</p>`;
+  }
+  if (oneOffs.length) {
+    const best = oneOffs.slice(0, 3).map((a) => `${esc(a.title)} (${a.avgRating})`).join(' · ');
+    html += `<p class="note" style="margin-top:10px"><b>Best one-offs:</b> ${best}${oneOffs.length > 3 ? ` — and ${oneOffs.length - 3} more done once` : ''}</p>`;
+  }
+  $('activities').innerHTML = html;
 }
 
 boot();

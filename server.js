@@ -29,6 +29,7 @@ const {
   DEMO_EMAIL,
 } = require('./lib/coach');
 const { getUser, updateUser } = require('./lib/db');
+const { getReport, listReports } = require('./lib/report');
 
 const PORT = process.env.PORT || 5757;
 const CREDS_PATH = path.join(__dirname, 'google-credentials.json');
@@ -241,6 +242,10 @@ app.get('/api/preview', async (req, res) => {
       habits: {
         daysParsed: data.habits.days.length,
         habitCount: data.habits.habitNames.length,
+        habitNames: data.habits.habitNames,
+        tab: data.source.sheetTab || null,
+        tabs: data.source.sheetTabs || null,
+        tabPickedBy: data.source.sheetTabPickedBy || null,
         label: labelH,
         last: lastH ? {
           date: lastH.date,
@@ -296,18 +301,60 @@ function authedClientForUser(req, user) {
   return client;
 }
 
-async function fetchSheetRows(client, sheetUrl) {
+// A Sheets URL usually carries #gid=… identifying the exact tab the user was
+// looking at — that's the authoritative choice. Shared trackers often have one
+// tab per person, so when there's no gid we fall back to: a tab whose name
+// looks like the user, else whichever tab parses to the most logged days.
+async function fetchSheetRows(client, sheetUrl, { userEmail = '' } = {}) {
   const id = extractId(sheetUrl, 'sheet');
   if (!id) throw new Error('Bad sheet URL');
+  const gidMatch = String(sheetUrl).match(/[#&?]gid=(\d+)/);
+  const gid = gidMatch ? Number(gidMatch[1]) : null;
+
   const sheets = google.sheets({ version: 'v4', auth: client });
   const meta = await sheets.spreadsheets.get({ spreadsheetId: id });
-  const tabs = meta.data.sheets.map((s) => s.properties.title);
-  const tab = tabs[0];
-  const { data } = await sheets.spreadsheets.values.get({
+  const props = meta.data.sheets.map((s) => s.properties);
+  if (!props.length) throw new Error('Spreadsheet has no tabs');
+  const tabs = props.map((p) => p.title);
+
+  const byGid = gid !== null ? props.find((p) => p.sheetId === gid) : null;
+  if (byGid) {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: id,
+      range: `'${byGid.title}'!A1:BZ2000`,
+    });
+    return { rows: data.values || [], tab: byGid.title, tabs, pickedBy: 'link' };
+  }
+
+  if (tabs.length === 1) {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: id,
+      range: `'${tabs[0]}'!A1:BZ2000`,
+    });
+    return { rows: data.values || [], tab: tabs[0], tabs, pickedBy: 'only tab' };
+  }
+
+  const { data } = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: id,
-    range: `'${tab}'!A1:AB1100`,
+    ranges: tabs.map((t) => `'${t}'!A1:BZ2000`),
   });
-  return data.values || [];
+  const parsed = (data.valueRanges || []).map((vr, i) => {
+    const rows = vr.values || [];
+    let days = 0;
+    try { days = parseHabitRows(rows, new Date()).days.length; } catch {}
+    return { tab: tabs[i], rows, days };
+  });
+
+  // Does a tab name look like this user? ("Karthik (Trial)" for karthik@…)
+  const localPart = String(userEmail).split('@')[0].toLowerCase();
+  const nameTokens = localPart.split(/[._\-0-9]+/).filter((t) => t.length >= 3);
+  const nameMatch = parsed.find((p) =>
+    p.days > 0 && nameTokens.some((t) => p.tab.toLowerCase().includes(t)));
+  if (nameMatch) return { ...nameMatch, tabs, pickedBy: 'name match' };
+
+  const best = parsed.filter((p) => p.days > 0).sort((a, b) => b.days - a.days)[0];
+  if (!best) return { rows: parsed[0].rows, tab: tabs[0], tabs, pickedBy: 'fallback' };
+  return { ...best, tabs, pickedBy: 'most data' };
 }
 
 async function fetchDocText(client, docUrl) {
@@ -343,8 +390,12 @@ async function loadDashboardData(req) {
     else if (!user.dataConfirmed) needsConfirm = true;
     if (client && user.sheetUrl) {
       try {
-        habitRows = await fetchSheetRows(client, user.sheetUrl);
+        const got = await fetchSheetRows(client, user.sheetUrl, { userEmail: email });
+        habitRows = got.rows;
         source.habits = 'google';
+        source.sheetTab = got.tab;
+        source.sheetTabs = got.tabs;
+        source.sheetTabPickedBy = got.pickedBy;
       } catch (e) { source.errors.push('Sheet fetch failed: ' + e.message); }
     }
     if (client && user.docUrl) {
@@ -438,6 +489,25 @@ app.post('/api/coach/weekly/fail', async (req, res) => {
     res.json(await replaceWeeklyGoal(req.userEmail, { week, index: Number(index), ...data }));
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/report', async (req, res) => {
+  try {
+    const data = await loadDashboardData(req);
+    if (!hasData(data)) return res.json({ error: 'Connect your Sheet and Doc first (🔗 Data).' });
+    res.json(await getReport(req.userEmail, { ...data, force: req.query.generate === '1' }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/report/history', async (req, res) => {
+  try {
+    const all = await listReports(req.userEmail);
+    res.json({ reports: all });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
