@@ -720,3 +720,21 @@ tr:last-child td { border-bottom: none; }
   to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 .info-data-box { animation-name: pop-in-center; }
+
+/* ---------- missing-source alert bar ---------- */
+#missing-banner {
+  background: #fce8e6; color: #a50e0e;
+  border-bottom: 1px solid #f5c6c4;
+  padding: 9px 24px; margin: -20px 0 20px; /* sits flush under the green bar */
+  text-align: center; font-size: 13px; line-height: 1.5;
+}
+#missing-banner b { color: #8c0d0d; }
+#missing-banner button {
+  margin-left: 10px; padding: 4px 14px; font-size: 12px; font-weight: 700;
+  background: #fff; color: #c5221f; border: 1px solid #f5c6c4;
+}
+#missing-banner button:hover { background: #c5221f; color: #fff; border-color: transparent; }
+#missing-banner.confirm { background: #fef7e0; color: #7a5800; border-bottom-color: #feefc3; }
+#missing-banner.confirm b { color: #664a00; }
+#missing-banner.confirm button { color: #b06000; border-color: #f5e3a8; }
+#missing-banner.confirm button:hover { background: #b06000; color: #fff; border-color: transparent; }

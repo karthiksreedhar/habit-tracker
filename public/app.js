@@ -56,8 +56,8 @@ async function boot() {
   NEEDS_DATA = loggedDays === 0;
   THIN_DATA = loggedDays > 0 && loggedDays < 3;
 
-  showView('data' in data && data.needsSetup ? 'data' : 'dashboard');
-  if (data.needsConfirm && !data.needsSetup) { showView('data'); runPreview(); }
+  // Always land on the widget dashboard; banners handle any setup nudges
+  showView('dashboard');
 
   if (NEEDS_DATA) {
     emptyCoach('coach', 'Daily Coach', NEEDS_SETUP
@@ -71,6 +71,31 @@ async function boot() {
     loadWeeklyCoach(false);
   }
   render(data);
+}
+
+// Light-red bar shown on every page while a source link is missing — the app
+// still runs on whatever is connected, but both links are strongly encouraged.
+function renderMissingBanner(missing, needsConfirm) {
+  const el = $('missing-banner');
+  el.classList.remove('confirm');
+  if (!missing.length && needsConfirm) {
+    // Links work, parse just never got a thumbs-up — gentle amber nudge
+    el.classList.add('confirm');
+    el.innerHTML = `👀 <b>Quick check:</b> I'm reading your Sheet + Doc — take 20 seconds to confirm it parsed right.
+      <button onclick="showView('data');runPreview()">Check my data</button>`;
+    el.style.display = '';
+    return;
+  }
+  // Both missing -> the green welcome banner owns that case; red bar is only
+  // for the "one link short" state.
+  if (missing.length !== 1) { el.style.display = 'none'; return; }
+  const msgs = {
+    sheet: `<b>No habit-tracker Sheet linked.</b> Habits, streaks, and half of what the coach knows are missing — journal-only for now.`,
+    doc: `<b>No journal Doc linked.</b> Day scores, people, activities and bedtimes are missing — habits-only for now.`,
+  };
+  el.innerHTML = `⚠️ ${msgs[missing[0]]}
+    <button onclick="showView('data')">Link it in 🔗 Data</button>`;
+  el.style.display = '';
 }
 
 // State that empty-state rendering keys off
@@ -1443,11 +1468,8 @@ async function logout() { await fetch('/api/logout', { method: 'POST' }); locati
 // ---------- render ----------
 function render(data) {
   const { habits, journal, insights, source } = data;
-  const badge = $('source-badge');
-  const live = source.habits === 'google' || source.journal === 'google';
-  badge.textContent = live ? 'Live from Google' : 'Local snapshot';
-  badge.classList.toggle('live', live);
   $('date-badge').textContent = new Date(data.fetchedAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  renderMissingBanner(data.missing || [], data.needsConfirm);
   $('errors').textContent = (source.errors || []).join(' · ');
 
   renderKpis(insights.kpis);

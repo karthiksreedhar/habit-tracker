@@ -428,10 +428,13 @@ async function loadDashboardData(req) {
   let journalText = null;
   let needsSetup = false;
   let needsConfirm = false;
+  const missing = []; // which of the two source links are absent
 
   if (email !== DEMO_EMAIL) {
     const user = await getUser(email);
     const client = authedClientForUser(req, user);
+    if (!user || !user.sheetUrl) missing.push('sheet');
+    if (!user || !user.docUrl) missing.push('doc');
     if (!user || (!user.sheetUrl && !user.docUrl)) needsSetup = true;
     else if (!user.dataConfirmed) needsConfirm = true;
     if (client && user.sheetUrl) {
@@ -463,7 +466,7 @@ async function loadDashboardData(req) {
   const habits = parseHabitRows(habitRows, today);
   const journal = parseJournal(journalText);
   const insights = buildInsights(habits, journal);
-  return { source, needsSetup, needsConfirm, fetchedAt: today.toISOString(), habits, journal, insights };
+  return { source, needsSetup, needsConfirm, missing, fetchedAt: today.toISOString(), habits, journal, insights };
 }
 
 const hasData = (d) => d.habits.days.length || d.journal.length;
