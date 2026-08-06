@@ -492,6 +492,13 @@ async function refreshSocialSnapshot(email, data) {
 app.get('/api/data', async (req, res) => {
   try {
     const data = await loadDashboardData(req);
+    // If both sources fetched cleanly and parsed real days, the read is
+    // self-evidently fine — confirm silently instead of nagging forever.
+    if (data.needsConfirm && !data.source.errors.length
+        && data.habits.days.length && data.journal.length) {
+      await updateUser(req.userEmail, { dataConfirmed: true });
+      data.needsConfirm = false;
+    }
     res.json(data);
     refreshSocialSnapshot(req.userEmail, data).catch(() => {});
   } catch (e) {

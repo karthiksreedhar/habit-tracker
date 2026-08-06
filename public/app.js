@@ -82,7 +82,8 @@ function renderMissingBanner(missing, needsConfirm) {
     // Links work, parse just never got a thumbs-up — gentle amber nudge
     el.classList.add('confirm');
     el.innerHTML = `👀 <b>Quick check:</b> I'm reading your Sheet + Doc — take 20 seconds to confirm it parsed right.
-      <button onclick="showView('data');runPreview()">Check my data</button>`;
+      <button onclick="showView('data');runPreview()">Check my data</button>
+      <button title="Dismiss" onclick="fetch('/api/confirm-data',{method:'POST'});this.parentNode.style.display='none'">✕</button>`;
     el.style.display = '';
     return;
   }
