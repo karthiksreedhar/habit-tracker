@@ -38,6 +38,7 @@ async function boot() {
   renderAuthArea();
   renderSettings();
   setupDrawer();
+  hydrateWidgetState();
   renderWidgetMenu();
   applyWidgets();
   applyWidgetOrder();
@@ -87,6 +88,7 @@ function setWidgetMode(m) {
   localStorage.setItem('widgetMode', m);
   renderWidgetMenu();
   applyWidgets();
+  syncWidgetState();
 }
 
 // Always part of the suggested set, whatever the coach says
@@ -162,6 +164,7 @@ function renderWidgetMenu() {
         localStorage.setItem('widgets', JSON.stringify(p));
       }
       applyWidgets();
+      syncWidgetState();
     };
   });
 }
@@ -169,6 +172,40 @@ function renderWidgetMenu() {
 // ---------- drag & drop reordering ----------
 // Widgets keep their width (span classes); dragging the ⠿ handle moves them
 // anywhere in the grid. Order persists per browser.
+
+// ---------- widget state persistence (Mongo, cross-device) ----------
+// The server copy is hydrated on boot and updated (debounced) on every
+// change; the coach reads it to bias tomorrow's suggested widgets.
+
+function hydrateWidgetState() {
+  const ws = STATUS && STATUS.widgetState;
+  if (!ws) return;
+  if (ws.mode) localStorage.setItem('widgetMode', ws.mode);
+  if (Array.isArray(ws.order)) localStorage.setItem('widgetOrder', JSON.stringify(ws.order));
+  if (ws.prefs) localStorage.setItem('widgets', JSON.stringify(ws.prefs));
+  if (ws.suggestedOverrides) localStorage.setItem('suggestedOverrides', JSON.stringify(ws.suggestedOverrides));
+}
+
+let syncTimer = null;
+function syncWidgetState() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    let order = null;
+    try { order = JSON.parse(localStorage.getItem('widgetOrder')); } catch {}
+    const vis = visibleWidgets();
+    fetch('/api/widgets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: widgetMode(),
+        order,
+        prefs: widgetPrefs(),
+        suggestedOverrides: suggestedOverrides(),
+        lastVisible: vis ? [...vis] : WIDGETS.map(([id]) => id),
+      }),
+    }).catch(() => {});
+  }, 600);
+}
 
 // Hide a widget from the ✕ button — same store the drawer uses, so it can
 // always be brought back from ⚙︎ Widgets.
@@ -184,6 +221,7 @@ function hideWidget(id) {
   }
   renderWidgetMenu();
   applyWidgets();
+  syncWidgetState();
 }
 
 function applyWidgetOrder() {
@@ -203,6 +241,7 @@ function saveWidgetOrder() {
   const ids = [...document.querySelectorAll('.grid > [data-widget]')]
     .map((el) => el.getAttribute('data-widget'));
   localStorage.setItem('widgetOrder', JSON.stringify(ids));
+  syncWidgetState();
 }
 
 // Re-runnable: renderers that wipe a widget's innerHTML (like the KPI block)
@@ -800,15 +839,19 @@ function renderImpact(impact) {
 
 // ---------- people ----------
 function renderPeople(people) {
-  const top = people.filter((p) => p.days >= 1).slice(0, 10);
+  // Ordered by how good days with them are, best first
+  const top = people.filter((p) => p.days >= 1)
+    .sort((a, b) => (b.avgDayScore ?? -1) - (a.avgDayScore ?? -1) || b.acts - a.acts)
+    .slice(0, 10);
   if (!top.length) { $('people').innerHTML = '<p class="note">No people detected yet.</p>'; return; }
-  $('people').innerHTML = `<table><tr><th>Person</th><th></th><th class="num">Avg day</th><th class="num">Hangs</th></tr>` +
+  $('people').innerHTML = `<table><tr><th>Person</th><th></th><th class="num">Avg day</th><th class="num">Avg hang</th><th class="num">Hangs</th></tr>` +
     top.map((p) => {
       const w = p.avgDayScore !== null ? Math.max(p.avgDayScore * 10, 2) : 0;
-      return `<tr data-tt="${tt(p.name, [`${p.acts} activities across ${p.days} day(s)`, p.avgDayScore !== null ? `Avg day score together: <b>${p.avgDayScore}</b>` : '', p.avgActRating !== null ? `Avg activity rating: ${p.avgActRating}` : ''])}">
+      return `<tr data-tt="${tt(p.name, [`${p.acts} activities across ${p.days} day(s)`, p.avgDayScore !== null ? `Avg day score together: <b>${p.avgDayScore}</b>` : '', p.avgActRating !== null ? `Avg rating of those hangs: <b>${p.avgActRating}</b>` : ''])}">
         <td>${esc(p.name)}</td>
-        <td style="width:45%"><span class="rowbar"><span class="track"><span class="fill" style="width:${w}%;background:var(--blue)"></span></span></span></td>
+        <td style="width:38%"><span class="rowbar"><span class="track"><span class="fill" style="width:${w}%;background:var(--blue)"></span></span></span></td>
         <td class="num"><b>${p.avgDayScore ?? '—'}</b></td>
+        <td class="num">${p.avgActRating ?? '—'}</td>
         <td class="num">${p.acts}</td></tr>`;
     }).join('') + `</table>`;
 }
@@ -931,9 +974,8 @@ function renderWeekdays(weekdays) {
 
 // ---------- activities ----------
 function renderActivities(acts) {
-  const recurring = acts.filter((a) => a.n >= 2);
-  const singles = acts.filter((a) => a.n === 1);
-  const rows = [...recurring, ...singles.slice(0, 6)].slice(0, 14);
+  // Strictly rating-ordered (ties broken by how often it happens)
+  const rows = [...acts].sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, 14);
   $('activities').innerHTML = `<table>
     <tr><th>Activity</th><th></th><th class="num">Avg rating</th><th class="num">Times</th></tr>` +
     rows.map((a) => `<tr>

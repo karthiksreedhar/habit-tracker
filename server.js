@@ -168,9 +168,7 @@ app.get('/api/status', async (req, res) => {
   const email = getSessionEmail(req);
   const demo = demoMode();
   let user = null;
-  if (email) {
-    try { user = await getUser(email); } catch {}
-  }
+  try { user = await getUser(email || (demo ? DEMO_EMAIL : '')); } catch {}
   res.json({
     googleConfigured: !demo,
     loginRequired: !demo && !email,
@@ -179,7 +177,29 @@ app.get('/api/status', async (req, res) => {
     email: email || (demo ? 'local demo' : null),
     sheetUrl: user ? user.sheetUrl || null : null,
     docUrl: user ? user.docUrl || null : null,
+    widgetState: user ? user.widgetState || null : null,
   });
+});
+
+// Persist the user's widget setup (mode, order, visibility) so it follows
+// them across devices and informs the next day's suggested widgets.
+app.post('/api/widgets', async (req, res) => {
+  try {
+    const s = req.body || {};
+    await updateUser(req.userEmail, {
+      widgetState: {
+        mode: s.mode || 'suggested',
+        order: Array.isArray(s.order) ? s.order : null,
+        prefs: s.prefs || {},
+        suggestedOverrides: s.suggestedOverrides || {},
+        lastVisible: Array.isArray(s.lastVisible) ? s.lastVisible : null,
+        savedAt: new Date().toISOString(),
+      },
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/config', async (req, res) => {
@@ -349,7 +369,9 @@ app.get('/api/coach', async (req, res) => {
   try {
     const data = await loadDashboardData(req);
     if (!hasData(data)) return res.json({ error: 'Add your habit tracker + journal links first (⚙︎ Widgets → Data sources).' });
-    res.json(await getCoach(req.userEmail, { ...data, force: req.query.refresh === '1' }));
+    let widgetState = null;
+    try { widgetState = (await getUser(req.userEmail))?.widgetState || null; } catch {}
+    res.json(await getCoach(req.userEmail, { ...data, widgetState, force: req.query.refresh === '1' }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
