@@ -101,6 +101,10 @@ header button { background: rgba(255, 255, 255, 0.94); border-color: transparent
 .card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(60, 64, 67, 0.1); }
 .card h2 { font-size: 12px; font-weight: 700; color: var(--green-dark); margin: 0 0 2px; text-transform: uppercase; letter-spacing: 0.06em; }
 .card .sub { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+tr.low-n td { color: var(--muted); }
+tr.low-n td:first-child::after {
+  content: '·1'; margin-left: 5px; font-size: 10px; color: var(--muted);
+}
 .window-pill {
   display: inline-block; margin-left: 6px; padding: 1px 9px; border-radius: 999px;
   background: var(--seq-1); color: var(--green-dark);
@@ -454,3 +458,99 @@ tr:last-child td { border-bottom: none; }
 .drag-handle:active { cursor: grabbing; }
 [data-widget].dragging { opacity: 0.45; transform: scale(0.98); box-shadow: 0 12px 32px rgba(60, 64, 67, 0.25); }
 .kpis .drag-handle { top: -4px; right: 0; }
+
+/* ---------- in-page views (dashboard / goals / data / report) ---------- */
+.view { display: none; animation: pop-in 0.4s var(--bounce) both; }
+.view.open { display: block; }
+.view-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 6px;
+}
+.view-head h2 { font-size: 20px; margin: 0; }
+.view > .sub { font-size: 13px; color: var(--ink-2); margin: 0 0 16px; }
+.field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+
+/* ---------- goals ---------- */
+.goal-form { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+.goal-form input {
+  flex: 1; min-width: 240px; font: inherit; font-size: 14px; padding: 11px 16px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--ink);
+}
+.goal-form input:focus { outline: none; border-color: var(--green); }
+.goal-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.goal-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 22px;
+  padding: 18px 20px; position: relative;
+  transition: transform 0.28s var(--bounce), box-shadow 0.2s ease;
+}
+.goal-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(60, 64, 67, 0.12); }
+.goal-card .goal-text { font-size: 15.5px; font-weight: 600; margin: 0 40px 10px 0; line-height: 1.4; }
+.goal-card .goal-x {
+  position: absolute; top: 14px; right: 14px; width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--grid); border-radius: 999px; background: var(--page);
+  color: var(--muted); font-size: 11px; opacity: 0.6;
+}
+.goal-card .goal-x:hover { opacity: 1; color: var(--critical); border-color: #f5c6c4; box-shadow: none; }
+.goal-status {
+  display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em;
+  text-transform: uppercase; padding: 3px 10px; border-radius: 999px; margin-bottom: 10px;
+}
+.goal-status.on_track { background: #e6f4ea; color: #137333; }
+.goal-status.close { background: #fef7e0; color: #b06000; }
+.goal-status.slipping { background: #fce8e6; color: #c5221f; }
+.goal-status.no_signal { background: var(--page); color: var(--muted); }
+.goal-metric { margin: 10px 0 12px; }
+.goal-metric .gm-top {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; color: var(--ink-2); margin-bottom: 5px;
+}
+.goal-metric .gm-top b { font-size: 14px; color: var(--ink); }
+.goal-bar { height: 8px; background: var(--page); border-radius: 999px; overflow: hidden; }
+.goal-bar span {
+  display: block; height: 100%; border-radius: 999px; background: var(--green);
+  transition: width 0.6s var(--bounce);
+}
+.goal-evidence { font-size: 12.5px; color: var(--ink-2); margin: 0; padding-left: 16px; }
+.goal-evidence li { margin-bottom: 3px; }
+.goal-next {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--grid);
+  font-size: 13px; color: var(--ink);
+}
+.goal-next b { color: var(--green-dark); }
+
+/* ---------- drive panes ---------- */
+.drive-panes { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-top: 18px; }
+.drive-pane {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.drive-pane .dp-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 12px 16px; border-bottom: 1px solid var(--grid);
+}
+.drive-pane .dp-head h3 { font-size: 13px; margin: 0; }
+.drive-pane iframe { width: 100%; height: 460px; border: 0; background: var(--page); }
+.drive-pane .dp-empty { padding: 26px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* ---------- parse debugger ---------- */
+#parse-debug { margin-top: 16px; }
+.pd-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; font-size: 12.5px; color: var(--ink-2); }
+.pd-summary b { color: var(--ink); }
+.pd-lines { max-height: 340px; overflow-y: auto; border: 1px solid var(--grid); border-radius: 14px; }
+.pd-line { display: flex; gap: 10px; padding: 6px 12px; font-size: 12.5px; border-bottom: 1px solid var(--grid); }
+.pd-line:last-child { border-bottom: none; }
+.pd-line .pd-no { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 30px; text-align: right; }
+.pd-line .pd-raw { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+.pd-line.day { background: #e8f0fe; }
+.pd-line.activity .pd-tag { color: var(--green-dark); }
+.pd-line.skipped { background: #fce8e6; }
+.pd-line.skipped .pd-tag { color: var(--critical); }
+.pd-line .pd-tag { font-weight: 700; font-size: 10.5px; text-transform: uppercase; min-width: 62px; }
+.pd-line .pd-why { color: var(--ink-2); flex: 1.2; }
+
+/* ---------- empty states ---------- */
+.empty-state { text-align: center; padding: 22px 16px; color: var(--muted); font-size: 13px; }
+.empty-state .es-emoji { font-size: 24px; display: block; margin-bottom: 6px; opacity: 0.8; }
+.adherence-note { font-size: 11.5px; color: var(--muted); margin-left: 10px; }

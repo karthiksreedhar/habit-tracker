@@ -21,15 +21,17 @@ try {
 
 const express = require('express');
 const { google } = require('googleapis');
-const { csvToRows, parseHabitRows, parseJournal } = require('./lib/parse');
+const { csvToRows, parseHabitRows, parseJournal, parseJournalDebug } = require('./lib/parse');
 const { buildInsights } = require('./lib/analytics');
 const {
   getCoach, setChecked, replaceTodo,
   getWeeklyCoach, setWeeklyChecked, replaceWeeklyGoal,
+  getAdherence, adherenceBlock,
   DEMO_EMAIL,
 } = require('./lib/coach');
 const { getUser, updateUser } = require('./lib/db');
 const { getReport, listReports } = require('./lib/report');
+const { listGoals, addGoal, removeGoal, assessGoals, goalsPromptBlock } = require('./lib/goals');
 
 const PORT = process.env.PORT || 5757;
 const CREDS_PATH = path.join(__dirname, 'google-credentials.json');
@@ -270,6 +272,49 @@ app.get('/api/preview', async (req, res) => {
   }
 });
 
+// Line-by-line account of how the journal was read, so a user whose format
+// differs can see exactly which lines were dropped and why.
+app.get('/api/parse-debug', async (req, res) => {
+  try {
+    const email = req.userEmail;
+    let journalText = '';
+    let habitRows = [];
+    const notes = [];
+
+    if (email === DEMO_EMAIL) {
+      try { journalText = fs.readFileSync(path.join(__dirname, 'seed-journal.txt'), 'utf8'); } catch {}
+      try { habitRows = csvToRows(fs.readFileSync(path.join(__dirname, 'seed-habits.csv'), 'utf8')); } catch {}
+    } else {
+      const user = await getUser(email);
+      const client = authedClientForUser(req, user);
+      if (!client) notes.push('Not connected to Google yet.');
+      if (client && user.docUrl) {
+        try { journalText = await fetchDocText(client, user.docUrl); }
+        catch (e) { notes.push('Doc fetch failed: ' + e.message); }
+      } else if (!user || !user.docUrl) notes.push('No journal Doc linked.');
+      if (client && user.sheetUrl) {
+        try { habitRows = await fetchSheetRows(client, user.sheetUrl); }
+        catch (e) { notes.push('Sheet fetch failed: ' + e.message); }
+      } else if (!user || !user.sheetUrl) notes.push('No habit Sheet linked.');
+    }
+
+    const habits = parseHabitRows(habitRows, new Date());
+    res.json({
+      journal: parseJournalDebug(journalText),
+      sheet: {
+        rows: habitRows.length,
+        header: habitRows.length ? habitRows[0].filter(Boolean).slice(0, 30) : [],
+        habitNames: habits.habitNames,
+        daysParsed: habits.days.length,
+      },
+      notes,
+      hasDoc: !!journalText,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/confirm-data', async (req, res) => {
   try {
     await updateUser(req.userEmail, { dataConfirmed: true });
@@ -438,7 +483,8 @@ app.get('/api/coach', async (req, res) => {
     if (!hasData(data)) return res.json({ error: 'Add your habit tracker + journal links first (⚙︎ Widgets → Data sources).' });
     let widgetState = null;
     try { widgetState = (await getUser(req.userEmail))?.widgetState || null; } catch {}
-    res.json(await getCoach(req.userEmail, { ...data, widgetState, force: req.query.refresh === '1' }));
+    const card = await getCoach(req.userEmail, { ...data, widgetState, force: req.query.refresh === '1' });
+    res.json({ ...card, adherence: await getAdherence(req.userEmail) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -467,7 +513,17 @@ app.get('/api/coach/weekly', async (req, res) => {
   try {
     const data = await loadDashboardData(req);
     if (!hasData(data)) return res.json({ error: 'Add your habit tracker + journal links first (⚙︎ Widgets → Data sources).' });
-    res.json(await getWeeklyCoach(req.userEmail, { ...data, force: req.query.refresh === '1' }));
+    // Stated goals steer the weekly card
+    let goalsBlock = '';
+    try {
+      const goals = await listGoals(req.userEmail);
+      if (goals.length) {
+        const user = await getUser(req.userEmail);
+        goalsBlock = goalsPromptBlock(goals, user && user.goalAssessment);
+      }
+    } catch {}
+    const card = await getWeeklyCoach(req.userEmail, { ...data, goalsBlock, force: req.query.refresh === '1' });
+    res.json({ ...card, adherence: await getAdherence(req.userEmail) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -492,14 +548,60 @@ app.post('/api/coach/weekly/fail', async (req, res) => {
   }
 });
 
+// ---------- goals ----------
+
+app.get('/api/goals', async (req, res) => {
+  try {
+    const goals = await listGoals(req.userEmail);
+    let assessment = { goals: [], assessedAt: null };
+    if (goals.length) {
+      const data = await loadDashboardData(req);
+      if (hasData(data)) {
+        try { assessment = await assessGoals(req.userEmail, { ...data, force: req.query.assess === '1' }); }
+        catch (e) { assessment = { goals: [], assessedAt: null, error: e.message }; }
+      }
+    }
+    res.json({ goals, assessment });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/goals', async (req, res) => {
+  try {
+    res.json({ ok: true, goal: await addGoal(req.userEmail, req.body.text) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/goals/:id', async (req, res) => {
+  try {
+    res.json({ ok: true, goals: await removeGoal(req.userEmail, req.params.id) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 app.get('/api/report', async (req, res) => {
   try {
     const data = await loadDashboardData(req);
     if (!hasData(data)) return res.json({ error: 'Connect your Sheet and Doc first (🔗 Data).' });
+    let goalsBlock = '';
+    try {
+      const goals = await listGoals(req.userEmail);
+      if (goals.length) {
+        const user = await getUser(req.userEmail);
+        goalsBlock = goalsPromptBlock(goals, user && user.goalAssessment);
+      }
+    } catch {}
+    let followThrough = '';
+    try { followThrough = adherenceBlock(await getAdherence(req.userEmail)); } catch {}
     res.json(await getReport(req.userEmail, {
       ...data,
+      goalsBlock: goalsBlock + followThrough,
       start: ISO_DATE.test(req.query.start || '') ? req.query.start : null,
       end: ISO_DATE.test(req.query.end || '') ? req.query.end : null,
       force: req.query.generate === '1',

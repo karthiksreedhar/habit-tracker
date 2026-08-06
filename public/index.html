@@ -22,7 +22,8 @@
     <span id="date-badge" class="badge"></span>
     <span class="spacer"></span>
     <span id="auth-area"></span>
-    <button id="report-btn" title="Your fortnightly life report">📄 Report</button>
+    <button id="goals-btn" title="What you're working toward">🎯 Goals</button>
+    <button id="report-btn" title="Your life report">📄 Report</button>
     <button id="data-btn" title="Data sources & read check">🔗 Data</button>
     <button id="settings-btn" title="Widgets">⚙︎ Widgets</button>
     <button id="signout-btn" style="display:none" onclick="logout()">Sign out</button>
@@ -35,10 +36,73 @@
   <div id="setup-banner" style="display:none">
     <h2>👋 Welcome! First things first —</h2>
     <p>Connect your habit-tracker Google Sheet and daily-journal Google Doc. Nothing here works until you do.</p>
-    <button onclick="openDataPage(false)">Connect my Sheet + Doc →</button>
+    <button onclick="showView('data')">Connect my Sheet + Doc →</button>
   </div>
 
-  <div class="grid">
+  <!-- ===== Goals view ===== -->
+  <section id="view-goals" class="view">
+    <div class="view-head">
+      <h2>🎯 Goals</h2>
+      <button class="icon-btn" onclick="showView('dashboard')" title="Back to dashboard">✕</button>
+    </div>
+    <p class="sub">What you're actually working toward. Everything else on the site — the weekly coach especially — bends toward these.</p>
+    <form id="goal-form" class="goal-form">
+      <input id="goal-input" maxlength="200" placeholder="e.g. Lift 4x a week, or be in bed before 1am" autocomplete="off">
+      <button class="primary" type="submit">Add goal</button>
+    </form>
+    <div id="goals-list"></div>
+  </section>
+
+  <!-- ===== Data view ===== -->
+  <section id="view-data" class="view">
+    <div class="view-head">
+      <h2>🔗 Your data</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="toggle-sources">Links &amp; format check</button>
+        <button class="icon-btn" onclick="showView('dashboard')" title="Back to dashboard">✕</button>
+      </div>
+    </div>
+
+    <div id="sources-panel">
+      <p class="note">Link your habit-tracker Sheet and daily-journal Doc. The dashboard re-reads both every time you open it.</p>
+      <div class="field-row">
+        <div class="field"><label>Habit tracker — Google Sheet URL</label>
+          <input id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/…"></div>
+        <div class="field"><label>Daily journal — Google Doc URL</label>
+          <input id="doc-url" placeholder="https://docs.google.com/document/d/…"></div>
+      </div>
+      <div class="preview-actions">
+        <button class="primary" onclick="saveAndCheck()">Save &amp; check my data</button>
+        <button onclick="runPreview()">↻ Re-check reads</button>
+        <button onclick="toggleFormatHelp()">Formatting guide</button>
+        <button onclick="loadParseDebug()">🔬 Debug parsing</button>
+      </div>
+
+      <div id="preview-section" style="display:none">
+        <h3 class="preview-title">Did I read your data right?</h3>
+        <p class="sub">The most recent complete day found in each source — check it against what you actually logged.</p>
+        <div id="preview-body" class="preview-cols"></div>
+        <div id="preview-errors" class="errors"></div>
+        <div class="preview-actions"><button class="primary" onclick="confirmData()">✓ Yes, that's my data</button></div>
+      </div>
+
+      <div id="format-help" style="display:none">
+        <h3>Suggested formats</h3>
+        <p><b>Habit sheet:</b> a header row containing <code>DATE</code> (and optionally <code>DAY</code>), then one column per habit with TRUE/FALSE per day.</p>
+        <p><b>Journal doc:</b> a date line starting each day, then one line per activity:</p>
+        <pre>07/24/26 | 8 | Cambridge
+10:30 | Call with Lydia | Home | 8
+3:00 | Softball w/ Cory | Field | 9</pre>
+        <p>That's <code>date | day score (0–10) | city</code>, then <code>time | title | location | rating</code>. Parsing is deliberately loose — bullets are fine, the date can be <code>7/24</code>, <code>2026-07-24</code> or <code>July 24, 2026</code>, times can be <code>9:30am</code> or <code>21:00</code>, ratings can be <code>8</code> or <code>8/10</code>, and <code>|</code>, tabs or <code> - </code> all work as separators. Location and rating are optional.</p>
+      </div>
+
+      <div id="parse-debug" style="display:none"></div>
+    </div>
+
+    <div id="drive-panes" class="drive-panes"></div>
+  </section>
+
+  <div class="grid" id="view-dashboard">
     <div class="kpis span12" id="kpis" data-widget="kpis"></div>
 
     <div class="card coach span12" data-widget="coach">
@@ -121,64 +185,25 @@
       <div id="activities"></div>
     </div>
   </div>
-</div>
 
-<div id="data-page">
-  <div class="data-card">
-    <div class="drawer-head">
-      <h2>🔗 Your data</h2>
-      <button id="data-close" class="icon-btn" title="Close">✕</button>
-    </div>
-    <p class="note" style="margin-bottom:14px">Link your habit-tracker Google Sheet and daily-journal Google Doc. The dashboard re-reads both every time you open it — just keep logging in your usual places.</p>
-    <div class="field"><label>Habit tracker — Google Sheet URL</label>
-      <input id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/…"></div>
-    <div class="field"><label>Daily journal — Google Doc URL</label>
-      <input id="doc-url" placeholder="https://docs.google.com/document/d/…"></div>
-    <button class="primary" onclick="saveAndCheck()">Save &amp; check my data</button>
-
-    <div id="preview-section" style="display:none">
-      <h3 class="preview-title">Did I read your data right?</h3>
-      <p class="sub">Checking yesterday — its log should be complete, unlike today's. Compare against what you actually did.</p>
-      <div id="preview-body" class="preview-cols"></div>
-      <div id="preview-errors" class="errors"></div>
-      <div id="format-help" style="display:none">
-        <h3>Expected formats</h3>
-        <p><b>Habit sheet:</b> a header row containing <code>DAY</code>, <code>DATE</code>, then one column per habit with TRUE/FALSE values per day. Dates like <code>7/21</code> or <code>7/21/26</code>.</p>
-        <p><b>Journal doc:</b> one block per day, like:</p>
-        <pre>07/24/26 | 8 | Cambridge
-
-10:30 | Call with Lydia | Home | 8
-3:00 | Softball w/ Cory | Field | 9</pre>
-        <p>That's <code>date | day score (0–10) | city</code>, then one line per activity: <code>time | title | location (optional) | rating (0–10)</code>. Bullets are fine too.</p>
-        <p>Adjust your Sheet/Doc (or the links above), then hit <b>Re-check</b>.</p>
-      </div>
-      <div class="preview-actions">
-        <button class="primary" onclick="confirmData()">✓ Yes, that's my data</button>
-        <button onclick="toggleFormatHelp()">Something's off</button>
-        <button onclick="runPreview()">↻ Re-check</button>
-      </div>
+<section id="view-report" class="view">
+  <div class="view-head no-print">
+    <h2>📄 Life Report</h2>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button onclick="window.print()">Print / PDF</button>
+      <button class="icon-btn" onclick="showView('dashboard')" title="Back to dashboard">✕</button>
     </div>
   </div>
+  <div class="report-controls no-print">
+    <label>From <input type="date" id="report-start"></label>
+    <label>To <input type="date" id="report-end"></label>
+    <button class="primary" id="report-generate">Generate report</button>
+    <button id="report-reset" title="Back to all logged data">All data</button>
+  </div>
+  <div id="report-body"></div>
+</section>
 </div>
 
-<div id="report-page">
-  <div class="report-card">
-    <div class="drawer-head no-print">
-      <h2>📄 Life Report</h2>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button onclick="window.print()">Print / PDF</button>
-        <button id="report-close" class="icon-btn" title="Close">✕</button>
-      </div>
-    </div>
-    <div class="report-controls no-print">
-      <label>From <input type="date" id="report-start"></label>
-      <label>To <input type="date" id="report-end"></label>
-      <button class="primary" id="report-generate">Generate report</button>
-      <button id="report-reset" title="Back to all logged data">All data</button>
-    </div>
-    <div id="report-body"></div>
-  </div>
-</div>
 
 <div id="drawer-backdrop"></div>
 <aside id="drawer">

@@ -38,6 +38,7 @@ async function boot() {
   renderAuthArea();
   setupDataPage();
   setupReportPage();
+  setupGoalsPage();
   setupDrawer();
   hydrateWidgetState();
   renderWidgetMenu();
@@ -47,16 +48,48 @@ async function boot() {
   const res = await fetch('/api/data');
   const data = await res.json();
   if (data.error) { $('errors').textContent = 'Failed to build dashboard: ' + data.error; return; }
-  $('setup-banner').style.display = data.needsSetup ? '' : 'none';
-  if (data.needsConfirm) openDataPage(true);
-  if (data.needsSetup) {
-    $('coach').innerHTML = '<h2>Daily Coach</h2><p class="note">Connect your Sheet + Doc first — then the coach reads them.</p>';
-    $('weekly-coach').innerHTML = '<h2>Weekly Coach</h2><p class="note">Connect your data to get weekly goals.</p>';
+
+  NEEDS_SETUP = !!data.needsSetup;
+  const loggedDays = Math.max(data.habits.days.length, data.journal.length);
+  NEEDS_DATA = loggedDays === 0;
+  THIN_DATA = loggedDays > 0 && loggedDays < 3;
+
+  showView('data' in data && data.needsSetup ? 'data' : 'dashboard');
+  if (data.needsConfirm && !data.needsSetup) { showView('data'); runPreview(); }
+
+  if (NEEDS_DATA) {
+    emptyCoach('coach', 'Daily Coach', NEEDS_SETUP
+      ? 'Connect your Sheet and Doc, and today\'s plan shows up here.'
+      : 'Nothing logged yet — the coach starts once there\'s a day to read.');
+    emptyCoach('weekly-coach', 'Weekly Coach', NEEDS_SETUP
+      ? 'Connect your data to get weekly goals.'
+      : 'No logged days yet, so there\'s nothing to set goals against.');
   } else {
     loadCoach(false);
     loadWeeklyCoach(false);
   }
   render(data);
+}
+
+// State that empty-state rendering keys off
+let NEEDS_SETUP = false;
+let NEEDS_DATA = false;
+let THIN_DATA = false;
+
+function emptyCoach(id, title, msg) {
+  $(id).innerHTML = `<h2>${esc(title)}</h2>
+    <div class="empty-state"><span class="es-emoji">🌱</span>${esc(msg)}</div>`;
+}
+
+// Every widget routes through this so a fresh account never shows a broken chart
+function emptyState(el, msg, emoji) {
+  const node = typeof el === 'string' ? $(el) : el;
+  if (node) node.innerHTML = `<div class="empty-state"><span class="es-emoji">${emoji || '—'}</span>${esc(msg)}</div>`;
+}
+
+function fmtTime(iso) {
+  try { return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+  catch { return ''; }
 }
 
 // ---------- widget drawer ----------
@@ -362,8 +395,12 @@ function renderCoach(justCheckedIdx = -1) {
     col('Try this', real(c.activity_ideas, 'title'), (i) => `<div class="coach-item"><b>${esc(i.title)}</b><span>${esc(i.why)}</span></div>`);
   if (cols) html += `<div class="coach-cols">${cols}</div>`;
   if (c.watch_out) html += `<div class="coach-watch">⚠️ ${esc(c.watch_out)}</div>`;
+  const ad = c.adherence && c.adherence.daily;
+  const adNote = ad && ad.issued >= 3
+    ? `<span class="adherence-note">${ad.completionRate}% of asks done over ${ad.windowDays} days${ad.discarded ? ` · ${ad.discarded} swapped` : ''}${ad.streak >= 2 ? ` · ${ad.streak}-day streak` : ''}</span>`
+    : '';
   html += `<div class="coach-meta">
-    <span class="progress">${done}/${c.todos.length} done</span>
+    <span class="progress">${done}/${c.todos.length} done</span>${adNote}
     <span>Generated ${new Date(c.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
     <span class="spacer"></span>
     <button onclick="loadCoach(true)">↻ Refresh</button>
@@ -420,8 +457,12 @@ function renderWeeklyCoach(justCheckedIdx = -1) {
   if (w.experiment) {
     html += `<div class="coach-ft"><h3>This week's experiment</h3><div class="ft-item">🧪 ${esc(w.experiment)}</div></div>`;
   }
+  const wad = w.adherence && w.adherence.weekly;
+  const wNote = wad && wad.issued >= 3
+    ? `<span class="adherence-note">${wad.completionRate}% hit over ${wad.windowWeeks} weeks${wad.discarded ? ` · ${wad.discarded} abandoned` : ''}</span>`
+    : '';
   html += `<div class="coach-meta">
-    <span class="progress">${done}/${w.goals.length} weekly goals</span>
+    <span class="progress">${done}/${w.goals.length} weekly goals</span>${wNote}
     <span>Generated ${new Date(w.generatedAt).toLocaleDateString(undefined, { weekday: 'short' })} ${new Date(w.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
     <span class="spacer"></span>
     <button onclick="loadWeeklyCoach(true)">↻ Refresh</button>
@@ -532,8 +573,7 @@ let REPORT = null;
 let REPORT_BOUNDS = null;
 
 function setupReportPage() {
-  $('report-btn').onclick = () => openReport();
-  $('report-close').onclick = () => $('report-page').classList.remove('open');
+  $('report-btn').onclick = () => showView('report');
   $('report-generate').onclick = () => loadReport(true);
   $('report-reset').onclick = () => { applyBoundsToInputs(); loadReport(true); };
 }
@@ -552,9 +592,148 @@ function applyBoundsToInputs() {
   }
 }
 
-function openReport() {
-  $('report-page').classList.add('open');
-  if (!REPORT) loadReport(false);
+// ---------- goals ----------
+
+let GOALS_LOADED = false;
+
+function setupGoalsPage() {
+  $('goals-btn').onclick = () => showView('goals');
+  $('goal-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const input = $('goal-input');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    input.disabled = true;
+    try {
+      const r = await (await fetch('/api/goals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })).json();
+      if (r.error) throw new Error(r.error);
+      GOALS_LOADED = false;
+      await loadGoals(true);
+    } catch (err) {
+      $('goals-list').insertAdjacentHTML('afterbegin', `<p class="errors">${esc(err.message)}</p>`);
+    } finally {
+      input.disabled = false;
+      input.focus();
+    }
+  };
+}
+
+async function removeGoalById(id) {
+  await fetch('/api/goals/' + encodeURIComponent(id), { method: 'DELETE' });
+  GOALS_LOADED = false;
+  loadGoals(true);
+}
+
+async function loadGoals(force) {
+  if (GOALS_LOADED && !force) return;
+  const el = $('goals-list');
+  if (!GOALS_LOADED) {
+    el.innerHTML = `<div class="coach-loading">Measuring your goals against the data<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>`;
+  }
+  try {
+    const d = await (await fetch('/api/goals')).json();
+    if (d.error) throw new Error(d.error);
+    GOALS_LOADED = true;
+    renderGoals(d.goals || [], d.assessment || { goals: [] });
+  } catch (e) {
+    el.innerHTML = `<p class="note">Couldn't load goals: ${esc(e.message)}</p>`;
+  }
+}
+
+const GOAL_STATUS_LABEL = {
+  on_track: 'On track', close: 'Getting there',
+  slipping: 'Slipping', no_signal: 'Nothing measures this yet',
+};
+
+function renderGoals(goals, assessment) {
+  const el = $('goals-list');
+  if (!goals.length) {
+    el.innerHTML = `<div class="empty-state"><span class="es-emoji">🎯</span>
+      No goals yet. Add one above — say it however you'd say it out loud
+      ("lift 4x a week", "be in bed before 1am", "see people more than screens").</div>`;
+    return;
+  }
+  const byId = new Map((assessment.goals || []).map((g) => [g.id, g]));
+  const stale = !assessment.goals || assessment.goals.length < goals.length;
+
+  el.innerHTML = `<div class="goal-cards">` + goals.map((g) => {
+    const a = byId.get(g.id);
+    let body;
+    if (!a) {
+      body = `<p class="note">${NEEDS_DATA
+        ? 'Connect your Sheet and Doc to track progress on this.'
+        : 'Measuring this against your data…'}</p>`;
+    } else {
+      const pct = Math.max(0, Math.min(100, Number(a.metric.percent) || 0));
+      body = `
+        <span class="goal-status ${esc(a.status)}">${esc(GOAL_STATUS_LABEL[a.status] || a.status)}</span>
+        <p class="coach-insight" style="margin-bottom:6px">${esc(a.headline)}</p>
+        ${a.metric && a.metric.label ? `<div class="goal-metric">
+          <div class="gm-top"><span>${esc(a.metric.label)}</span>
+            <span><b>${esc(a.metric.value || '—')}</b>${a.metric.target ? ` / ${esc(a.metric.target)}` : ''}</span></div>
+          <div class="goal-bar"><span style="width:${pct}%"></span></div>
+        </div>` : ''}
+        ${(a.evidence || []).length ? `<ul class="goal-evidence">${a.evidence.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
+        ${a.next_step ? `<div class="goal-next"><b>Next:</b> ${esc(a.next_step)}</div>` : ''}`;
+    }
+    return `<div class="goal-card">
+      <button class="goal-x" title="Remove goal" onclick="removeGoalById('${esc(g.id)}')">✕</button>
+      <p class="goal-text">${esc(g.text)}</p>
+      ${body}
+    </div>`;
+  }).join('') + `</div>`;
+
+  const when = assessment.assessedAt ? fmtTime(assessment.assessedAt) : null;
+  el.insertAdjacentHTML('beforeend', `<div class="coach-foot" style="margin-top:16px">
+    <span class="note">${stale ? 'New goal added — refresh to measure it.' : when ? 'Assessed ' + esc(when) : ''}</span>
+    <button onclick="reassessGoals(this)">↻ Re-assess</button>
+  </div>`);
+}
+
+async function reassessGoals(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Assessing…';
+  try {
+    const d = await (await fetch('/api/goals?assess=1')).json();
+    if (d.error) throw new Error(d.error);
+    renderGoals(d.goals || [], d.assessment || { goals: [] });
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '↻ Re-assess';
+    $('goals-list').insertAdjacentHTML('afterbegin', `<p class="errors">${esc(e.message)}</p>`);
+  }
+}
+
+// ---------- view switching ----------
+// The dashboard, goals, data and report are sibling pages in the same column;
+// only one is mounted at a time so nothing floats over the widgets.
+
+const VIEWS = ['dashboard', 'goals', 'data', 'report'];
+let CURRENT_VIEW = 'dashboard';
+
+function showView(name) {
+  CURRENT_VIEW = name;
+  for (const v of VIEWS) {
+    const el = $('view-' + v);
+    if (!el) continue;
+    if (v === 'dashboard') el.style.display = name === 'dashboard' ? '' : 'none';
+    else el.classList.toggle('open', v === name);
+  }
+  $('setup-banner').style.display =
+    (name === 'dashboard' && NEEDS_SETUP) ? '' : 'none';
+  for (const [v, btn] of [['goals', 'goals-btn'], ['data', 'data-btn'], ['report', 'report-btn']]) {
+    const b = $(btn);
+    if (b) b.classList.toggle('primary', v === name);
+  }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (name === 'report' && !REPORT) loadReport(false);
+  if (name === 'goals') loadGoals();
+  if (name === 'data') renderDrivePanes();
 }
 
 async function loadReport(generate) {
@@ -618,6 +797,13 @@ function renderReport(r) {
     ).join('') + `</div>`;
   }
 
+  if (r.goal_progress && r.goal_progress.length) {
+    html += `<div class="report-since"><h3>Your goals over this period</h3>` +
+      r.goal_progress.map((g) => `<p style="margin:0 0 8px">
+        <span class="goal-status ${esc(g.verdict)}" style="margin:0 8px 0 0">${esc(GOAL_STATUS_LABEL[g.verdict] || g.verdict)}</span>
+        <b>${esc(g.goal)}</b> — ${esc(g.detail)}</p>`).join('') + `</div>`;
+  }
+
   if (r.since_last_report) {
     html += `<div class="report-since"><h3>Since your last report</h3><p>${esc(r.since_last_report)}</p></div>`;
   }
@@ -658,21 +844,106 @@ function renderReport(r) {
 // ---------- data page (links + read verification) ----------
 
 function setupDataPage() {
-  $('data-btn').onclick = () => openDataPage(!!(STATUS.sheetUrl || STATUS.docUrl));
-  $('data-close').onclick = closeDataPage;
+  $('data-btn').onclick = () => showView('data');
   $('sheet-url').value = STATUS.sheetUrl || '';
   $('doc-url').value = STATUS.docUrl || '';
+  // Once links exist, the page leads with the documents themselves; the
+  // link/format controls collapse behind this toggle.
+  const hasLinks = !!(STATUS.sheetUrl || STATUS.docUrl);
+  $('sources-panel').style.display = hasLinks ? 'none' : '';
+  $('toggle-sources').onclick = () => {
+    const p = $('sources-panel');
+    p.style.display = p.style.display === 'none' ? '' : 'none';
+  };
 }
 
-// withCheck: also run the parse preview right away (for users who already
-// have links and want to verify reads)
-function openDataPage(withCheck) {
-  $('data-page').classList.add('open');
-  if (withCheck) runPreview();
-  else $('preview-section').style.display = 'none';
+// Google forbids embedding the Docs/Sheets *editor* in a third-party frame,
+// so each pane shows the live read-only preview and hands editing off to a
+// real Google tab, then re-reads on return.
+function driveId(url, kind) {
+  const m = String(url || '').match(
+    kind === 'sheet' ? /spreadsheets\/d\/([\w-]+)/ : /document\/d\/([\w-]+)/);
+  return m ? m[1] : null;
 }
 
-function closeDataPage() { $('data-page').classList.remove('open'); }
+function drivePane(kind, url, title) {
+  const id = driveId(url, kind);
+  const base = kind === 'sheet'
+    ? `https://docs.google.com/spreadsheets/d/${id}`
+    : `https://docs.google.com/document/d/${id}`;
+  if (!id) {
+    return `<div class="drive-pane"><div class="dp-head"><h3>${esc(title)}</h3></div>
+      <div class="dp-empty">Not linked yet — add the URL under <b>Links &amp; format check</b>.</div></div>`;
+  }
+  return `<div class="drive-pane">
+    <div class="dp-head">
+      <h3>${esc(title)}</h3>
+      <span style="display:flex;gap:6px">
+        <button onclick="window.open('${base}/edit','_blank','noopener')">✏️ Edit in Google</button>
+        <button onclick="refreshDrivePane(this)" title="Reload after editing">↻</button>
+      </span>
+    </div>
+    <iframe src="${base}/preview" loading="lazy" title="${esc(title)} preview"></iframe>
+  </div>`;
+}
+
+function refreshDrivePane(btn) {
+  const frame = btn.closest('.drive-pane').querySelector('iframe');
+  if (frame) frame.src = frame.src;
+  runPreview();
+}
+
+function renderDrivePanes() {
+  const el = $('drive-panes');
+  if (!el) return;
+  if (STATUS.demo) {
+    el.innerHTML = `<p class="note">Local demo mode reads the seed files, so there's nothing to embed. Sign in with Google to link and edit live documents here.</p>`;
+    return;
+  }
+  el.innerHTML = drivePane('sheet', STATUS.sheetUrl, 'Habit tracker')
+    + drivePane('doc', STATUS.docUrl, 'Daily journal');
+}
+
+// ---------- parse debugger ----------
+
+async function loadParseDebug() {
+  const el = $('parse-debug');
+  el.style.display = '';
+  el.innerHTML = `<div class="coach-loading">Re-reading your sources line by line<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>`;
+  try {
+    const d = await (await fetch('/api/parse-debug')).json();
+    if (d.error) throw new Error(d.error);
+    const c = d.journal.counts;
+    let html = `<h3>Parsing debugger</h3>
+      <div class="pd-summary">
+        <span>Journal: <b>${c.day || 0}</b> day headers · <b>${c.activity || 0}</b> activities · <b>${c.skipped || 0}</b> unread</span>
+        <span>Sheet: <b>${d.sheet.daysParsed}</b> days · <b>${d.sheet.habitNames.length}</b> habits</span>
+      </div>`;
+    if (d.notes && d.notes.length) html += `<p class="note">${esc(d.notes.join(' · '))}</p>`;
+    if (d.sheet.habitNames.length) {
+      html += `<p class="note">Habit columns found: ${d.sheet.habitNames.map(esc).join(', ')}</p>`;
+    }
+    if (!d.journal.lines.length) {
+      html += `<p class="note">No journal lines to show.</p>`;
+    } else {
+      html += `<div class="pd-lines">` + d.journal.lines.map((l) => `
+        <div class="pd-line ${l.kind}">
+          <span class="pd-no">${l.lineNo}</span>
+          <span class="pd-tag">${l.kind === 'day' ? 'Day' : l.kind === 'activity' ? 'Read' : 'Skipped'}</span>
+          <span class="pd-raw">${esc((l.raw || '').trim().slice(0, 120)) || '—'}</span>
+          <span class="pd-why">${esc(
+            l.kind === 'day' ? `${l.date}${l.score !== null ? ` · score ${l.score}` : ''}${l.city ? ` · ${l.city}` : ''}`
+            : l.kind === 'activity' ? `${l.time} · ${l.title}${l.rating !== null ? ` · ${l.rating}/10` : ' · no rating'}`
+            : l.reason || ''
+          )}</span>
+        </div>`).join('') + `</div>`;
+      if (c.skipped) html += `<p class="note">Red rows were not read. Fix them in the doc and hit <b>Debug parsing</b> again.</p>`;
+    }
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<p class="note">Couldn't run the debugger: ${esc(e.message)}</p>`;
+  }
+}
 
 async function saveAndCheck() {
   await fetch('/api/config', {
@@ -801,6 +1072,7 @@ function bedtimeLabel(min) {
 // One shared normalized scale: 0-10 day score on the left ≡ 0-100% completion
 // on the right (both span the full plot height linearly).
 function renderRhythm(habits, journal) {
+  if (!journal.length && !habits.days.length) return emptyState('rhythm', 'No logged days yet — this fills in once you log a day.', '📈');
   // With no habit sheet, fall back to journal days so the score line still shows
   const haveHabits = habits.days.length > 0;
   const days = haveHabits ? habits.days : journal.map((d) => ({
@@ -878,6 +1150,7 @@ function labelRecentWidgets(recent) {
 
 // ---------- today ----------
 function renderToday(habits, journal) {
+  if (!journal.length) return emptyState('today', 'No journal days read yet.', '📓');
   const j = journal[journal.length - 1];
   if (!j) { $('today').innerHTML = '<p class="note">No journal entries yet.</p>'; return; }
   const hd = habits.days.find((d) => d.date === j.date);
@@ -895,6 +1168,7 @@ function renderToday(habits, journal) {
 // A real heatmap: rows are habit groups, each cell's intensity is the share
 // of that group's habits completed that day (a continuous 0-100% value).
 function renderHeatmap(habits) {
+  if (!habits.days.length) return emptyState('heatmap', 'No habit rows read yet — check the Sheet link under 🔗 Data.', '🗓');
   const days = habits.days;
   if (!days.length) { $('heatmap').innerHTML = '<p class="note">No habit data yet — connect your Sheet (🔗 Data).</p>'; return; }
   const CATS = [
@@ -954,6 +1228,7 @@ const truncate = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 // ---------- habit bars ----------
 function renderHabitBars(perHabit) {
+  if (!perHabit.length) return emptyState('habit-bars', 'No habit columns found in your Sheet yet.', '📊');
   if (!perHabit.length) { $('habit-bars').innerHTML = '<p class="note">No habits found in the sheet yet.</p>'; return; }
   const sorted = [...perHabit].sort((a, b) => b.rate - a.rate);
   $('habit-bars').innerHTML = sorted.map((h) => {
@@ -969,6 +1244,7 @@ function renderHabitBars(perHabit) {
 
 // ---------- impact dumbbells ----------
 function renderImpact(impact) {
+  if (!impact.length) return emptyState('impact', 'Needs a few more logged days before habits can be compared against day scores.', '🔍');
   if (!impact.length) { $('impact').innerHTML = '<p class="note">Not enough overlapping journal + habit days yet.</p>'; return; }
   const W = 520, rowH = 30, padL = 190, padR = 60, topH = 20;
   const H = topH + impact.length * rowH + 24;
@@ -997,19 +1273,21 @@ function renderImpact(impact) {
 
 // ---------- people ----------
 function renderPeople(people) {
-  // Repeat company only — one hang isn't a pattern. Ranked by how those hangs rate.
-  const top = people.filter((p) => p.acts >= 2)
-    .sort((a, b) => (b.avgActRating ?? -1) - (a.avgActRating ?? -1) || b.acts - a.acts)
-    .slice(0, 10);
+  // Ranked by how those hangs rate — but the people you actually see come
+  // first, so a single lucky hangout can't crowd out a regular. One-offs fill
+  // any leftover rows and are flagged as thin evidence.
+  const byRating = (a, b) => (b.avgActRating ?? -1) - (a.avgActRating ?? -1) || b.acts - a.acts;
+  const regulars = people.filter((p) => p.acts >= 2).sort(byRating);
+  const oneOffs = people.filter((p) => p.acts < 2).sort(byRating);
+  const top = [...regulars, ...oneOffs].slice(0, 12);
   if (!top.length) {
-    const once = people.length;
-    $('people').innerHTML = `<p class="note">${once ? `No one logged twice yet — ${once} ${once === 1 ? 'person appears' : 'people appear'} once so far.` : 'No people detected yet.'}</p>`;
+    $('people').innerHTML = `<p class="note">No people detected yet.</p>`;
     return;
   }
   $('people').innerHTML = `<table><tr><th>Person</th><th></th><th class="num">Avg hang</th><th class="num">Avg day</th><th class="num">Hangs</th></tr>` +
     top.map((p) => {
       const w = p.avgActRating !== null ? Math.max(p.avgActRating * 10, 2) : 0;
-      return `<tr data-tt="${tt(p.name, [`${p.acts} activities across ${p.days} day(s)`, p.avgDayScore !== null ? `Avg day score together: <b>${p.avgDayScore}</b>` : '', p.avgActRating !== null ? `Avg rating of those hangs: <b>${p.avgActRating}</b>` : ''])}">
+      return `<tr class="${p.acts < 2 ? 'low-n' : ''}" data-tt="${tt(p.name, [`${p.acts} activities across ${p.days} day(s)`, p.avgDayScore !== null ? `Avg day score together: <b>${p.avgDayScore}</b>` : '', p.avgActRating !== null ? `Avg rating of those hangs: <b>${p.avgActRating}</b>` : '', p.acts < 2 ? '<i>Only one hangout — treat as noise</i>' : ''])}">
         <td>${esc(p.name)}</td>
         <td style="width:38%"><span class="rowbar"><span class="track"><span class="fill" style="width:${w}%;background:var(--blue)"></span></span></span></td>
         <td class="num"><b>${p.avgActRating ?? '—'}</b></td>
@@ -1020,6 +1298,7 @@ function renderPeople(people) {
 
 // ---------- places ----------
 function renderPlaces(cities, split) {
+  if (!cities.length && !split.home.n && !split.out.n) return emptyState('places', 'No locations logged yet.', '📍');
   if (!cities.length && !split.home.n && !split.out.n) {
     $('places').innerHTML = '<p class="note">No locations in the journal yet — add a city after the day score, or locations to activities.</p>';
     return;
@@ -1037,6 +1316,7 @@ function renderPlaces(cities, split) {
 
 // ---------- sleep ----------
 function renderSleep(sleep, kpis) {
+  if (!sleep.length) return emptyState('sleep', 'No bedtimes read yet — log a line starting with "Sleep" or "Slept".', '🌙');
   if (!sleep.length) { $('sleep').innerHTML = '<p class="note">No sleep entries found.</p>'; return; }
   const W = 520, H = 190, padL = 46, padR = 12;
   const maxAfter = Math.max(...sleep.map((s) => s.bedtimeMin), 60);
@@ -1070,6 +1350,7 @@ function renderSleep(sleep, kpis) {
 
 // ---------- plant ----------
 function renderPlant(plant) {
+  if (!plant.daily.length) return emptyState('plant', 'No sessions logged in the past week.', '🌱');
   const days = plant.daily;
   if (!days.length || !plant.total) { $('plant').innerHTML = '<p class="note">No 🌱 sessions in the journal — nothing to chart.</p>'; return; }
   const W = 520, H = 170, padL = 30, padR = 12;
@@ -1120,6 +1401,7 @@ function renderWinsFocus(ins) {
 
 // ---------- weekdays ----------
 function renderWeekdays(weekdays) {
+  if (!weekdays.some((w) => w.avgScore !== null)) return emptyState('weekdays', 'Needs day scores across a few weekdays.', '📅');
   const W = 330, H = 150, padL = 26, padR = 8;
   const x = (i) => padL + (i + 0.5) * ((W - padL - padR) / 7);
   const y = (v) => 14 + (1 - v / 10) * (H - 46);
@@ -1142,6 +1424,7 @@ function renderWeekdays(weekdays) {
 // Things you actually repeat, ranked by how they rate. One-offs are noise here
 // (a single 10 isn't a pattern), so they get one compact line underneath.
 function renderActivities(acts) {
+  if (!acts.length) return emptyState('activities', 'No rated activities in the past week.', '⭐');
   if (!acts.length) { $('activities').innerHTML = '<p class="note">No rated activities in the journal yet.</p>'; return; }
   const recurring = acts.filter((a) => a.n >= 2).sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, 12);
   const oneOffs = acts.filter((a) => a.n === 1).sort((a, b) => b.avgRating - a.avgRating);
