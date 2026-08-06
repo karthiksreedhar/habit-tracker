@@ -79,7 +79,8 @@
       </div>
 
       <div id="preview-section" style="display:none">
-        <h3 class="preview-title">Did I read your data right?</h3>
+        <div class="ph-row"><h3 class="preview-title">Did I read your data right?</h3>
+          <button class="icon-btn" title="Close" onclick="document.getElementById('preview-section').style.display='none'">✕</button></div>
         <p class="sub">The most recent complete day found in each source — check it against what you actually logged.</p>
         <div id="preview-body" class="preview-cols"></div>
         <div id="preview-errors" class="errors"></div>
@@ -87,7 +88,8 @@
       </div>
 
       <div id="format-help" style="display:none">
-        <h3>Suggested formats</h3>
+        <div class="ph-row"><h3>Suggested formats</h3>
+          <button class="icon-btn" title="Close" onclick="document.getElementById('format-help').style.display='none'">✕</button></div>
         <p><b>Habit sheet:</b> a header row containing <code>DATE</code> (and optionally <code>DAY</code>), then one column per habit with TRUE/FALSE per day.</p>
         <p><b>Journal doc:</b> a date line starting each day, then one line per activity:</p>
         <pre>07/24/26 | 8 | Cambridge

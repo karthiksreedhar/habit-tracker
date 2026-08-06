@@ -912,7 +912,8 @@ async function loadParseDebug() {
     const d = await (await fetch('/api/parse-debug')).json();
     if (d.error) throw new Error(d.error);
     const c = d.journal.counts;
-    let html = `<h3>Parsing debugger</h3>
+    let html = `<div class="ph-row"><h3>Parsing debugger</h3>
+      <button class="icon-btn" title="Close" onclick="document.getElementById('parse-debug').style.display='none'">✕</button></div>
       <div class="pd-summary">
         <span>Journal: <b>${c.day || 0}</b> day headers · <b>${c.activity || 0}</b> activities · <b>${c.skipped || 0}</b> unread</span>
         <span>Sheet: <b>${d.sheet.daysParsed}</b> days · <b>${d.sheet.habitNames.length}</b> habits</span>
