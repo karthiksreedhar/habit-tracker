@@ -53,7 +53,7 @@ body {
   animation: pop-in 0.6s var(--bounce) both;
 }
 .login-emoji { font-size: 44px; margin-bottom: 8px; }
-.login-card h1 { font-size: 24px; margin: 0 0 8px; }
+.login-card h1 { font-size: 24px; margin: 0 0 18px; }
 .login-card p { color: var(--ink-2); margin: 0 0 20px; }
 .login-card button { font-size: 15px; padding: 11px 26px; }
 
