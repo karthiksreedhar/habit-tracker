@@ -760,11 +760,12 @@ function render(data) {
   renderImpact(insights.habitImpact);
   renderPeople(insights.people);
   renderPlaces(insights.cities, insights.locationSplit);
-  renderSleep(insights.sleep, insights.kpis);
-  renderPlant(insights.plant);
+  renderSleep(insights.recent.sleep, insights.kpis);
+  renderPlant(insights.recent.plant);
+  labelRecentWidgets(insights.recent);
   renderWinsFocus(insights);
   renderWeekdays(insights.weekdays);
-  renderActivities(insights.activities);
+  renderActivities(insights.recent.activities);
   ensureWidgetControls();
 }
 
@@ -856,6 +857,23 @@ function renderRhythm(habits, journal) {
       <span class="key"><span class="swatch" style="background:var(--green-dark);border-radius:999px"></span>day score (0–10)</span>
       ${haveHabits ? '<span class="key"><span class="swatch" style="background:var(--seq-2)"></span>habit completion (0–100%)</span>' : ''}
     </div>`;
+}
+
+// Stamp the rolling-week widgets with the window they actually cover
+function labelRecentWidgets(recent) {
+  const range = recent.start && recent.end
+    ? `${fmtDate(recent.start)}–${fmtDate(recent.end)}`
+    : 'last 7 days';
+  const badge = `<span class="window-pill">Past week · ${esc(range)}</span>`;
+  const labels = {
+    sleep: 'Bedtime vs the midnight target',
+    plant: 'Solo vs social sessions per day',
+    activities: 'Things you do repeatedly, ranked by how they actually rate',
+  };
+  for (const [id, text] of Object.entries(labels)) {
+    const card = document.querySelector(`[data-widget="${id}"] .sub`);
+    if (card) card.innerHTML = `${esc(text)} ${badge}`;
+  }
 }
 
 // ---------- today ----------
