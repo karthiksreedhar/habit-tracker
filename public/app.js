@@ -39,6 +39,7 @@ async function boot() {
   setupDataPage();
   setupReportPage();
   setupGoalsPage();
+  setupSocialPage();
   setupDrawer();
   hydrateWidgetState();
   renderWidgetMenu();
@@ -777,11 +778,321 @@ async function reassessGoals(btn) {
   }
 }
 
+// ---------- social ----------
+
+let SOCIAL = null;   // last /api/social response
+let WIZ = null;      // walkthrough state
+
+function setupSocialPage() {
+  $('social-btn').onclick = () => showView('social');
+}
+
+async function loadSocial() {
+  const el = $('social-body');
+  el.innerHTML = `<div class="coach-loading">Loading<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>`;
+  try {
+    SOCIAL = await (await fetch('/api/social')).json();
+    if (SOCIAL.error) throw new Error(SOCIAL.error);
+  } catch (e) {
+    el.innerHTML = `<p class="note">Social is unavailable: ${esc(e.message)}</p>`;
+    return;
+  }
+  const s = SOCIAL.settings;
+  $('social-privacy-btn').style.display = s.walkthroughDone ? '' : 'none';
+  if (!s.walkthroughDone) startSocialWizard(false);
+  else if (!s.enabled) renderSocialOff();
+  else renderSocialFeed();
+}
+
+function openSocialSettings() { startSocialWizard(true); }
+
+function renderSocialOff() {
+  $('social-body').innerHTML = `<div class="empty-state" style="padding:40px 16px">
+    <span class="es-emoji">🔒</span>
+    Sharing is <b>off</b> — nothing about you is visible to anyone.
+    <div style="margin-top:14px"><button class="primary" onclick="openSocialSettings()">Turn sharing back on</button></div>
+  </div>`;
+}
+
+// ----- the walkthrough -----
+// Every share is opt-in; the wizard never enables anything the user didn't
+// explicitly tick, and nothing is saved until the final step.
+
+function startSocialWizard(isEdit) {
+  const s = JSON.parse(JSON.stringify(SOCIAL.settings));
+  if (!s.displayName) s.displayName = (STATUS.email || 'me').split('@')[0];
+  WIZ = { step: 0, isEdit, s };
+  renderWizard();
+}
+
+const WIZ_STEPS = ['The deal', 'Your name', 'What to share', 'Who sees it', 'Review'];
+
+function renderWizard() {
+  const { step, s, isEdit } = WIZ;
+  const dots = WIZ_STEPS.map((label, i) =>
+    `<span class="wiz-dot ${i === step ? 'on' : i < step ? 'done' : ''}" title="${esc(label)}"></span>`).join('');
+  let body = '';
+
+  if (step === 0) {
+    body = `
+      <h3>Share only what you choose — with only who you choose</h3>
+      <ul class="wiz-list">
+        <li>🔒 <b>Everything starts private.</b> Nothing about you is visible until you finish this walkthrough, and every item is off until you turn it on.</li>
+        <li>📸 Friends see <b>summaries you approve</b> (like "lifted 4x this week") — never your journal text, raw logs, or Google documents.</li>
+        <li>👥 <b>You pick the audience</b>: everyone on the app, or only specific people.</li>
+        <li>🏆 Shared numbers power friendly leaderboards and a bulletin board for your circle.</li>
+        <li>↩️ Change or turn it all off any time from the 🔒 Privacy button.</li>
+      </ul>`;
+  } else if (step === 1) {
+    body = `
+      <h3>What should friends call you?</h3>
+      <div class="field" style="max-width:320px"><label>Display name</label>
+        <input id="wiz-name" maxlength="40" value="${esc(s.displayName)}"></div>
+      <p class="note">Shown instead of your email everywhere on the social page.</p>`;
+  } else if (step === 2) {
+    const opt = (key, label, desc, extra = '') => `
+      <label class="wiz-opt ${extra.includes('sensitive') ? 'sensitive' : ''}">
+        <input type="checkbox" data-share="${key}" ${s.share[key] ? 'checked' : ''}>
+        <span><b>${label}</b>${extra.includes('sensitive') ? ' <span class="sens-tag">sensitive</span>' : ''}<small>${desc}</small></span>
+      </label>`;
+    const habitNames = (window.APP_DATA && APP_DATA.habits.habitNames) || [];
+    body = `
+      <h3>What are you comfortable sharing?</h3>
+      <p class="note">All off by default. Tick only what you want your circle to see.</p>
+      <div class="wiz-opts">
+        ${opt('habitCompletion', 'Overall habit completion %', 'One number: how much of your checklist you hit (7-day average).')}
+        <label class="wiz-opt">
+          <input type="checkbox" data-share="habits" ${s.share.habits.enabled ? 'checked' : ''}>
+          <span><b>Specific habits</b><small>Completion % and streak for the habits you pick — habit names are visible.</small></span>
+        </label>
+        <div id="wiz-habit-picker" style="display:${s.share.habits.enabled ? '' : 'none'}" class="wiz-habits">
+          ${habitNames.map((n) => `<label class="gtag" style="cursor:pointer"><input type="checkbox" data-habit="${esc(n)}" ${s.share.habits.names.includes(n) ? 'checked' : ''}> ${esc(n)}</label>`).join('') || '<span class="note">No habit columns found yet.</span>'}
+        </div>
+        ${opt('dayScores', 'Average day score', 'Your 7-day average day rating (0–10). Not the individual days.')}
+        ${opt('bedtimes', 'Bedtimes', 'Average bedtime and % of nights before midnight.')}
+        ${opt('adherence', 'Coach follow-through', 'How often you complete your daily coach checklist.')}
+        ${opt('activities', 'Top activities', 'Your 3 best-rated recent activities — titles are visible, so skim them first.')}
+        ${opt('goals', 'Goals & progress', 'Your goal texts with status and progress %. Skip if any goal is private.')}
+        ${opt('sessions', '🌱 Sessions per week', 'Weekly session count.', 'sensitive')}
+      </div>`;
+  } else if (step === 3) {
+    const dir = SOCIAL.directory || [];
+    body = `
+      <h3>Who can see it?</h3>
+      <label class="wiz-opt"><input type="radio" name="aud" value="everyone" ${s.audience.mode === 'everyone' ? 'checked' : ''}>
+        <span><b>Everyone on the app</b><small>Anyone with an account here (it's just your circle of friends).</small></span></label>
+      <label class="wiz-opt"><input type="radio" name="aud" value="selected" ${s.audience.mode === 'selected' ? 'checked' : ''}>
+        <span><b>Only people I pick</b><small>Nobody else — including future signups — sees anything.</small></span></label>
+      <div id="wiz-audience" style="display:${s.audience.mode === 'selected' ? '' : 'none'}">
+        ${dir.length ? `<p class="note" style="margin-top:10px">On the app already:</p>` +
+          dir.map((d) => `<label class="gtag" style="cursor:pointer"><input type="checkbox" data-aud-email="${esc(d.email)}" ${s.audience.emails.includes(d.email) ? 'checked' : ''}> ${esc(d.displayName)} <small>(${esc(d.email)})</small></label>`).join(' ')
+          : `<p class="note" style="margin-top:10px">Nobody else has joined social yet.</p>`}
+        <div class="field" style="max-width:360px;margin-top:10px"><label>Add by email</label>
+          <input id="wiz-extra-emails" placeholder="friend@gmail.com, other@gmail.com"
+            value="${esc(s.audience.emails.filter((e) => !dir.some((d) => d.email === e)).join(', '))}"></div>
+      </div>`;
+  } else {
+    const on = [];
+    const sh = s.share;
+    if (sh.habitCompletion) on.push('overall completion %');
+    if (sh.habits.enabled && sh.habits.names.length) on.push(`${sh.habits.names.length} specific habit(s): ${sh.habits.names.join(', ')}`);
+    if (sh.dayScores) on.push('avg day score');
+    if (sh.bedtimes) on.push('bedtimes');
+    if (sh.adherence) on.push('coach follow-through');
+    if (sh.activities) on.push('top activities');
+    if (sh.goals) on.push('goals & progress');
+    if (sh.sessions) on.push('🌱 sessions/week');
+    const aud = s.audience.mode === 'everyone'
+      ? 'everyone on the app'
+      : s.audience.emails.length ? `only: ${s.audience.emails.join(', ')}` : 'nobody yet (pick people or switch to everyone)';
+    body = `
+      <h3>Last look before anything is shared</h3>
+      <div class="preview-col" style="margin:12px 0">
+        <h3>You'll share</h3>
+        ${on.length ? `<ul class="wiz-list">${on.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="note">Nothing — you can still see friends who share with you, and post on the bulletin.</p>'}
+        <h3 style="margin-top:10px">With</h3>
+        <p style="margin:4px 0">${esc(aud)}</p>
+      </div>
+      <p class="note">You can change any of this, or turn it all off, from 🔒 Privacy.</p>`;
+  }
+
+  const canBack = step > 0;
+  const next = step === WIZ_STEPS.length - 1
+    ? `<button class="primary" onclick="finishWizard()">${WIZ.isEdit ? 'Save settings' : '✓ Start sharing'}</button>`
+    : `<button class="primary" onclick="wizNext(1)">${step === 0 ? 'Set it up →' : 'Next →'}</button>`;
+  $('social-body').innerHTML = `
+    <div class="wiz-card">
+      <div class="wiz-dots">${dots}</div>
+      ${body}
+      <div class="preview-actions" style="margin-top:18px">
+        ${canBack ? `<button onclick="wizNext(-1)">← Back</button>` : ''}
+        ${next}
+        ${step === 0 && !WIZ.isEdit ? `<button onclick="showView('dashboard')">Not now</button>` : ''}
+        ${WIZ.isEdit && SOCIAL.settings.enabled ? `<button onclick="disableSharing()" style="color:var(--critical)">Turn off sharing</button>` : ''}
+      </div>
+    </div>`;
+  bindWizard();
+}
+
+function bindWizard() {
+  const { s } = WIZ;
+  const name = $('wiz-name');
+  if (name) name.oninput = () => { s.displayName = name.value; };
+  document.querySelectorAll('[data-share]').forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.getAttribute('data-share') === 'habits') {
+        s.share.habits.enabled = cb.checked;
+        const picker = $('wiz-habit-picker');
+        if (picker) picker.style.display = cb.checked ? '' : 'none';
+      } else {
+        s.share[cb.getAttribute('data-share')] = cb.checked;
+      }
+    };
+  });
+  document.querySelectorAll('[data-habit]').forEach((cb) => {
+    cb.onchange = () => {
+      const n = cb.getAttribute('data-habit');
+      if (cb.checked) { if (!s.share.habits.names.includes(n)) s.share.habits.names.push(n); }
+      else s.share.habits.names = s.share.habits.names.filter((x) => x !== n);
+    };
+  });
+  document.querySelectorAll('input[name="aud"]').forEach((r) => {
+    r.onchange = () => {
+      s.audience.mode = r.value;
+      const box = $('wiz-audience');
+      if (box) box.style.display = r.value === 'selected' ? '' : 'none';
+    };
+  });
+  document.querySelectorAll('[data-aud-email]').forEach((cb) => {
+    cb.onchange = () => {
+      const e = cb.getAttribute('data-aud-email');
+      if (cb.checked) { if (!s.audience.emails.includes(e)) s.audience.emails.push(e); }
+      else s.audience.emails = s.audience.emails.filter((x) => x !== e);
+    };
+  });
+  const extra = $('wiz-extra-emails');
+  if (extra) extra.onchange = () => {
+    const dir = new Set((SOCIAL.directory || []).map((d) => d.email));
+    const kept = s.audience.emails.filter((e) => dir.has(e));
+    const typed = extra.value.split(/[\s,;]+/).map((e) => e.trim().toLowerCase()).filter(Boolean);
+    s.audience.emails = [...new Set([...kept, ...typed])];
+  };
+}
+
+function wizNext(delta) {
+  WIZ.step = Math.max(0, Math.min(WIZ_STEPS.length - 1, WIZ.step + delta));
+  renderWizard();
+}
+
+async function finishWizard() {
+  const s = WIZ.s;
+  s.enabled = true;
+  s.walkthroughDone = true;
+  const r = await (await fetch('/api/social/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(s),
+  })).json();
+  if (r.error) { alert('Could not save: ' + r.error); return; }
+  loadSocial();
+}
+
+async function disableSharing() {
+  if (!confirm('Turn off sharing? Friends will immediately stop seeing anything about you.')) return;
+  await fetch('/api/social/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...WIZ.s, enabled: false, walkthroughDone: true }),
+  });
+  loadSocial();
+}
+
+// ----- the feed -----
+
+function timeAgo(iso) {
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function renderSocialFeed() {
+  const feed = SOCIAL.feed || { members: [], boards: [], insights: [], posts: [] };
+  const me = SOCIAL.email;
+  const others = feed.members.filter((m) => m.email !== me);
+  let html = '';
+
+  const s = SOCIAL.settings;
+  const audDesc = s.audience.mode === 'everyone' ? 'everyone on the app' : `${s.audience.emails.length} chosen ${s.audience.emails.length === 1 ? 'person' : 'people'}`;
+  html += `<p class="note" style="margin-bottom:14px">You're sharing with <b>${esc(audDesc)}</b> · ${others.length} ${others.length === 1 ? 'person shares' : 'people share'} with you · <a href="#" onclick="openSocialSettings();return false">adjust</a></p>`;
+
+  if (!others.length) {
+    html += `<div class="empty-state"><span class="es-emoji">👋</span>
+      It's just you so far. Leaderboards light up when friends share the same things —
+      tell them to hit <b>👥 Social</b> after they sign in.</div>`;
+  }
+
+  if (feed.insights.length) {
+    html += `<div class="card coach" style="margin-bottom:16px"><h2>Today's chatter</h2>
+      <div class="social-insights">${feed.insights.map((l) => `<div class="si-line">${esc(l)}</div>`).join('')}</div></div>`;
+  }
+
+  if (feed.boards.length) {
+    html += `<div class="social-boards">` + feed.boards.map((b) => `
+      <div class="card sboard"><h2>${esc(b.emoji)} ${esc(b.title)}</h2>
+        <table>${b.rows.map((r, i) => `
+          <tr class="${r.email === me ? 'me-row' : ''}">
+            <td class="num" style="width:26px">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}</td>
+            <td>${esc(r.name)}${r.email === me ? ' <small>(you)</small>' : ''}</td>
+            <td class="num"><b>${esc(r.display)}</b></td>
+          </tr>`).join('')}</table>
+      </div>`).join('') + `</div>`;
+  }
+
+  html += `<div class="card" style="margin-top:16px"><h2>📌 Bulletin</h2>
+    <p class="sub">Visible to the people you share with — and you see posts from people who share with you.</p>
+    <div class="bulletin-compose">
+      <input id="bulletin-input" maxlength="500" placeholder="Say something to the circle…"
+        onkeydown="if(event.key==='Enter')postBulletin()">
+      <button class="primary" onclick="postBulletin()">Post</button>
+    </div>
+    <div class="bulletin-list">${feed.posts.length ? feed.posts.map((p) => `
+      <div class="bpost">
+        <div class="bpost-head"><b>${esc(p.displayName)}</b><span class="note">${esc(timeAgo(p.createdAt))}</span>
+          ${p.mine ? `<button class="bpost-del" title="Delete" onclick="deleteBulletin('${esc(p.pid)}')">🗑</button>` : ''}</div>
+        <div>${esc(p.text)}</div>
+      </div>`).join('') : `<p class="note">Nothing posted yet. Break the ice.</p>`}
+    </div>
+  </div>`;
+
+  $('social-body').innerHTML = html;
+}
+
+async function postBulletin() {
+  const input = $('bulletin-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.disabled = true;
+  const r = await (await fetch('/api/social/post', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })).json();
+  if (r.error) alert(r.error);
+  loadSocial();
+}
+
+async function deleteBulletin(pid) {
+  await fetch('/api/social/post/' + encodeURIComponent(pid), { method: 'DELETE' });
+  loadSocial();
+}
+
 // ---------- view switching ----------
 // The dashboard, goals, data and report are sibling pages in the same column;
 // only one is mounted at a time so nothing floats over the widgets.
 
-const VIEWS = ['dashboard', 'goals', 'data', 'report'];
+const VIEWS = ['dashboard', 'goals', 'data', 'report', 'social'];
 let CURRENT_VIEW = 'dashboard';
 
 function showView(name) {
@@ -798,6 +1109,7 @@ function showView(name) {
   if (name === 'report' && !REPORT) loadReport(false);
   if (name === 'goals') loadGoals();
   if (name === 'data') renderDrivePanes();
+  if (name === 'social') loadSocial();
 }
 
 async function loadReport(generate) {

@@ -32,6 +32,7 @@ const {
 const { getUser, updateUser } = require('./lib/db');
 const { getReport, listReports } = require('./lib/report');
 const { listGoals, addGoal, removeGoal, assessGoals, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
+const social = require('./lib/social');
 
 const PORT = process.env.PORT || 5757;
 const CREDS_PATH = path.join(__dirname, 'google-credentials.json');
@@ -469,11 +470,81 @@ const hasData = (d) => d.habits.days.length || d.journal.length;
 
 // ---------- data + coach API ----------
 
+// Refresh the user's shared snapshot from freshly-parsed data (no-op unless
+// they opted into social). Fire-and-forget from data loads.
+async function refreshSocialSnapshot(email, data) {
+  const user = await getUser(email);
+  if (!user || !user.social || !user.social.enabled) return;
+  let adherence = null;
+  try { adherence = await getAdherence(email); } catch {}
+  await social.updateSnapshot(email, {
+    habits: data.habits,
+    insights: data.insights,
+    goals: user.goals || [],
+    goalAssessment: user.goalAssessment || null,
+    adherence,
+  });
+}
+
 app.get('/api/data', async (req, res) => {
   try {
-    res.json(await loadDashboardData(req));
+    const data = await loadDashboardData(req);
+    res.json(data);
+    refreshSocialSnapshot(req.userEmail, data).catch(() => {});
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------- social ----------
+
+app.get('/api/social', async (req, res) => {
+  try {
+    const user = await getUser(req.userEmail);
+    const settings = social.getSettings(user);
+    const directory = (await social.listDirectory()).filter((d) => d.email !== req.userEmail);
+    const feed = settings.enabled && settings.walkthroughDone
+      ? await social.feedFor(req.userEmail)
+      : null;
+    res.json({ email: req.userEmail, settings, directory, feed });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/social/settings', async (req, res) => {
+  try {
+    const settings = await social.saveSettings(req.userEmail, req.body);
+    // Snapshot immediately so the new choices take effect right away
+    if (settings.enabled && settings.walkthroughDone) {
+      const data = await loadDashboardData(req);
+      await refreshSocialSnapshot(req.userEmail, data);
+    }
+    res.json({ ok: true, settings });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/social/post', async (req, res) => {
+  try {
+    const user = await getUser(req.userEmail);
+    const settings = social.getSettings(user);
+    if (!settings.enabled || !settings.walkthroughDone) {
+      return res.status(403).json({ error: 'Finish the social walkthrough first.' });
+    }
+    res.json({ ok: true, post: await social.addPost(req.userEmail, settings.displayName, req.body.text) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/social/post/:pid', async (req, res) => {
+  try {
+    await social.deletePost(req.userEmail, req.params.pid);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 });
 
