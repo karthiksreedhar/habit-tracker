@@ -623,7 +623,8 @@ function setupGoalsPage() {
   };
 }
 
-async function removeGoalById(id) {
+async function removeGoalById(id, text) {
+  if (!confirm(`Delete this goal?\n\n"${text}"`)) return;
   await fetch('/api/goals/' + encodeURIComponent(id), { method: 'DELETE' });
   GOALS_LOADED = false;
   loadGoals(true);
@@ -681,8 +682,9 @@ function renderGoals(goals, assessment) {
         ${(a.evidence || []).length ? `<ul class="goal-evidence">${a.evidence.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
         ${a.next_step ? `<div class="goal-next"><b>Next:</b> ${esc(a.next_step)}</div>` : ''}`;
     }
+    const safeText = esc(g.text).replace(/'/g, '&#39;');
     return `<div class="goal-card">
-      <button class="goal-x" title="Remove goal" onclick="removeGoalById('${esc(g.id)}')">✕</button>
+      <button class="goal-x" title="Delete this goal" onclick="removeGoalById('${esc(g.id)}', '${safeText}')">🗑 Delete</button>
       <p class="goal-text">${esc(g.text)}</p>
       ${body}
     </div>`;
@@ -726,10 +728,6 @@ function showView(name) {
   }
   $('setup-banner').style.display =
     (name === 'dashboard' && NEEDS_SETUP) ? '' : 'none';
-  for (const [v, btn] of [['goals', 'goals-btn'], ['data', 'data-btn'], ['report', 'report-btn']]) {
-    const b = $(btn);
-    if (b) b.classList.toggle('primary', v === name);
-  }
   window.scrollTo({ top: 0, behavior: 'smooth' });
   if (name === 'report' && !REPORT) loadReport(false);
   if (name === 'goals') loadGoals();
