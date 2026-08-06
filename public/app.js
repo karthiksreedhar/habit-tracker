@@ -1088,6 +1088,56 @@ async function deleteBulletin(pid) {
   loadSocial();
 }
 
+// ---------- header info overlay ----------
+// ⓘ dims the page and hangs a small explainer bubble under every nav button.
+
+const NAV_INFO = [
+  ['home-btn', 'Home', 'Back to your widget dashboard from any page.'],
+  ['goals-btn', 'Goals', 'State what you\'re working toward; progress is measured from your data.'],
+  ['report-btn', 'Report', 'Generate an in-depth, shareable report on any date range.'],
+  ['social-btn', 'Social', 'Share chosen stats with friends — leaderboards and a bulletin.'],
+  ['data-btn', 'Data', 'Link your Sheet + Doc, edit them, and verify they parse right.'],
+  ['settings-btn', 'Widgets', 'Show, hide, and rearrange the dashboard widgets.'],
+  ['signout-btn', 'Sign out', 'Log out of this browser.'],
+  ['info-btn', 'Info', 'This overlay. Click anywhere to close it.'],
+];
+
+function toggleInfoOverlay() {
+  const existing = document.getElementById('info-overlay');
+  if (existing) { existing.remove(); return; }
+  const ov = document.createElement('div');
+  ov.id = 'info-overlay';
+  ov.onclick = () => ov.remove();
+  let html = `<button class="info-close" title="Close" onclick="this.parentNode.remove()">✕ close</button>`;
+  let i = 0;
+  for (const [id, title, text] of NAV_INFO) {
+    const btn = document.getElementById(id);
+    if (!btn || btn.offsetParent === null) continue; // hidden (e.g. Sign out in demo)
+    const r = btn.getBoundingClientRect();
+    // Alternate two levels so neighboring bubbles never collide
+    const drop = i % 2 === 0 ? 12 : 112;
+    html += `<div class="info-tip ${i % 2 ? 'low' : ''}" style="left:${Math.round(r.left + r.width / 2)}px;top:${Math.round(r.bottom + drop)}px;animation-delay:${i * 0.06}s">
+      <b>${esc(title)}</b>${esc(text)}</div>`;
+    i++;
+  }
+  // What the whole app runs on — so new users know what to set up
+  html += `<div class="info-data-box" onclick="event.stopPropagation()">
+    <h3>📥 What feeds all of this</h3>
+    <p>Two Google files you keep updating however you already do:</p>
+    <ul>
+      <li><b>Habit tracker — Google Sheet.</b> A <code>DATE</code> column plus one TRUE/FALSE column per habit, one row per day.</li>
+      <li><b>Daily journal — Google Doc.</b> A date line for each day (<code>07/24/26 | 8 | Cambridge</code> = date, day score, city), then one line per activity: <code>3:00 | Softball w/ Cory | Field | 9</code>.</li>
+    </ul>
+    <p>Link both under <b>🔗 Data</b> — they're re-read every time you open the app, and the coach, report, goals and social views are all built from them.</p>
+    <button class="primary" onclick="document.getElementById('info-overlay').remove();showView('data')">Open 🔗 Data</button>
+  </div>`;
+  ov.innerHTML = html;
+  document.body.appendChild(ov);
+  const esch = (e) => { if (e.key === 'Escape') { ov.remove(); window.removeEventListener('keydown', esch); } };
+  window.addEventListener('keydown', esch);
+  window.addEventListener('resize', () => ov.remove(), { once: true });
+}
+
 // ---------- view switching ----------
 // The dashboard, goals, data and report are sibling pages in the same column;
 // only one is mounted at a time so nothing floats over the widgets.
