@@ -1787,16 +1787,16 @@ function renderPeople(people) {
   // first, so a single lucky hangout can't crowd out a regular. One-offs fill
   // any leftover rows and are flagged as thin evidence.
   const byRating = (a, b) => (b.avgActRating ?? -1) - (a.avgActRating ?? -1) || b.acts - a.acts;
-  // Enough real regulars (4+ people at 3+ hangs)? Show only them — otherwise
-  // everyone makes the cut.
-  const core = people.filter((p) => p.acts >= 3);
+  // Enough real regulars (5+ people with more than 3 hangs)? Show only them —
+  // otherwise everyone makes the cut. Max 10 rows either way.
+  const core = people.filter((p) => p.acts > 3);
   let top;
-  if (core.length > 3) {
-    top = core.sort(byRating).slice(0, 12);
+  if (core.length >= 5) {
+    top = core.sort(byRating).slice(0, 10);
   } else {
     const regulars = people.filter((p) => p.acts >= 2).sort(byRating);
     const oneOffs = people.filter((p) => p.acts < 2).sort(byRating);
-    top = [...regulars, ...oneOffs].slice(0, 12);
+    top = [...regulars, ...oneOffs].slice(0, 10);
   }
   if (!top.length) {
     $('people').innerHTML = `<p class="note">No people detected yet.</p>`;
