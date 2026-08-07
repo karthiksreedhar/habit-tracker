@@ -1421,7 +1421,7 @@ async function loadParseDebug() {
     let html = `<div class="ph-row"><h3>Parsing debugger</h3>
       <button class="icon-btn" title="Close" onclick="document.getElementById('parse-debug').style.display='none'">✕</button></div>
       <div class="pd-summary">
-        <span>Journal: <b>${c.day || 0}</b> day headers · <b>${c.activity || 0}</b> activities · <b>${c.skipped || 0}</b> unread</span>
+        <span>Journal: <b>${c.day || 0}</b> day headers · <b>${c.activity || 0}</b> activities${c.event ? ` · <b>${c.event}</b> big events` : ''} · <b>${c.skipped || 0}</b> unread</span>
         <span>Sheet: <b>${d.sheet.daysParsed}</b> days · <b>${d.sheet.habitNames.length}</b> habits</span>
       </div>`;
     if (d.notes && d.notes.length) html += `<p class="note">${esc(d.notes.join(' · '))}</p>`;
@@ -1434,11 +1434,12 @@ async function loadParseDebug() {
       html += `<div class="pd-lines">` + d.journal.lines.map((l) => `
         <div class="pd-line ${l.kind}">
           <span class="pd-no">${l.lineNo}</span>
-          <span class="pd-tag">${l.kind === 'day' ? 'Day' : l.kind === 'activity' ? 'Read' : 'Skipped'}</span>
+          <span class="pd-tag">${l.kind === 'day' ? 'Day' : l.kind === 'activity' ? 'Read' : l.kind === 'event' ? 'Event' : 'Skipped'}</span>
           <span class="pd-raw">${esc((l.raw || '').trim().slice(0, 120)) || '—'}</span>
           <span class="pd-why">${esc(
             l.kind === 'day' ? `${l.date}${l.score !== null ? ` · score ${l.score}` : ''}${l.city ? ` · ${l.city}` : ''}`
             : l.kind === 'activity' ? `${l.time} · ${l.title}${l.rating !== null ? ` · ${l.rating}/10` : ' · no rating'}`
+            : l.kind === 'event' ? (l.emphasized ? 'Highlighted note — treated as a big event' : 'Standalone note — treated as a big event')
             : l.reason || ''
           )}</span>
         </div>`).join('') + `</div>`;

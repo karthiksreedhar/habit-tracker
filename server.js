@@ -427,10 +427,25 @@ async function fetchDocText(client, docUrl) {
   for (const el of data.body.content || []) {
     if (!el.paragraph) continue;
     let line = '';
+    let highlighted = false;
+    let hasText = false;
+    let allBold = true;
     for (const run of el.paragraph.elements || []) {
-      if (run.textRun) line += run.textRun.content;
+      if (!run.textRun) continue;
+      const t = run.textRun.content;
+      line += t;
+      if (t.trim()) {
+        hasText = true;
+        const st = run.textRun.textStyle || {};
+        if (st.backgroundColor && st.backgroundColor.color) highlighted = true; // any highlight color
+        if (!st.bold) allBold = false;
+      }
     }
-    lines.push(line.replace(/\n$/, ''));
+    line = line.replace(/\n$/, '');
+    // Emphasized lines (highlight or fully bold) carry a sentinel the parser
+    // understands — how users mark "big event" varies, formatting survives it.
+    if (hasText && (highlighted || allBold)) line = '«!» ' + line.trim();
+    lines.push(line);
   }
   return lines.join('\n');
 }

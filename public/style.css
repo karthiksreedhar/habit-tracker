@@ -762,3 +762,5 @@ tr:last-child td { border-bottom: none; }
 }
 .win-toggle button:hover { transform: none; box-shadow: none; color: var(--ink-2); border-color: var(--baseline); }
 .win-toggle button.on { background: var(--seq-1); color: var(--green-dark); border-color: var(--seq-2); font-weight: 700; }
+.pd-line.event { background: #fef7e0; }
+.pd-line.event .pd-tag { color: #b06000; }
