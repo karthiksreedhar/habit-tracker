@@ -29,7 +29,7 @@ const {
   getAdherence, adherenceBlock,
   DEMO_EMAIL,
 } = require('./lib/coach');
-const { getUser, updateUser } = require('./lib/db');
+const { getUser, updateUser, deleteUserData } = require('./lib/db');
 const { getReport, listReports } = require('./lib/report');
 const { listGoals, addGoal, removeGoal, assessGoals, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
 const social = require('./lib/social');
@@ -166,6 +166,19 @@ app.get('/oauth2callback', async (req, res) => {
 app.post('/api/logout', (req, res) => {
   clearSessionCookie(res);
   res.json({ ok: true });
+});
+
+// Delete the account: every stored trace of the user, then sign out.
+app.delete('/api/account', async (req, res) => {
+  try {
+    const email = userEmailFor(req);
+    if (!email || email === DEMO_EMAIL) return res.status(400).json({ error: 'No account to delete.' });
+    await deleteUserData(email);
+    clearSessionCookie(res);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/status', async (req, res) => {

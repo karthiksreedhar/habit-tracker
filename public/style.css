@@ -738,3 +738,7 @@ tr:last-child td { border-bottom: none; }
 #missing-banner.confirm b { color: #664a00; }
 #missing-banner.confirm button { color: #b06000; border-color: #f5e3a8; }
 #missing-banner.confirm button:hover { background: #b06000; color: #fff; border-color: transparent; }
+
+.danger-zone { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--grid); }
+.danger-zone button { margin-left: 8px; font-size: 12px; color: var(--critical); border-color: #f5c6c4; }
+.danger-zone button:hover { background: var(--critical); color: #fff; border-color: transparent; }

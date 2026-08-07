@@ -1305,6 +1305,7 @@ function setupDataPage() {
   $('sources-panel').style.display = hasLinks ? 'none' : '';
   // First-time setup: show the suggested formats for both files up front
   if (!hasLinks) $('format-help').style.display = '';
+  if (!STATUS.demo && STATUS.loggedIn) $('danger-zone').style.display = '';
   $('toggle-sources').onclick = () => {
     const p = $('sources-panel');
     p.style.display = p.style.display === 'none' ? '' : 'none';
@@ -1467,6 +1468,14 @@ async function confirmData() {
   location.reload();
 }
 async function logout() { await fetch('/api/logout', { method: 'POST' }); location.reload(); }
+
+async function deleteAccount() {
+  if (!confirm('Delete your account and ALL stored data? This cannot be undone.\n\n(Your Google Sheet and Doc are not touched.)')) return;
+  if (!confirm('Last check — really delete everything?')) return;
+  const r = await (await fetch('/api/account', { method: 'DELETE' })).json();
+  if (r.error) { alert(r.error); return; }
+  location.reload();
+}
 
 // ---------- render ----------
 function render(data) {
