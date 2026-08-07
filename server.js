@@ -33,7 +33,7 @@ const {
 const { getUser, updateUser, deleteUserData } = require('./lib/db');
 const { nowInTz, userTz } = require('./lib/tz');
 const { getReport, listReports } = require('./lib/report');
-const { listGoals, addGoal, removeGoal, assessGoals, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
+const { listGoals, addGoal, removeGoal, assessGoals, assessSingleGoal, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
 const social = require('./lib/social');
 
 const PORT = process.env.PORT || 5757;
@@ -726,9 +726,14 @@ app.post('/api/goals', async (req, res) => {
   }
 });
 
+// Tag changes re-measure ONLY the affected goal; the rest of the board keeps
+// its cached assessment.
 app.post('/api/goals/:id/link', async (req, res) => {
   try {
-    res.json({ ok: true, goal: await linkActivity(req.userEmail, req.params.id, req.body.phrase) });
+    const goal = await linkActivity(req.userEmail, req.params.id, req.body.phrase);
+    const data = await loadDashboardData(req);
+    const assessment = await assessSingleGoal(req.userEmail, req.params.id, data);
+    res.json({ ok: true, goal, assessment });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -736,7 +741,10 @@ app.post('/api/goals/:id/link', async (req, res) => {
 
 app.post('/api/goals/:id/unlink', async (req, res) => {
   try {
-    res.json({ ok: true, goal: await unlinkActivity(req.userEmail, req.params.id, req.body.phrase) });
+    const goal = await unlinkActivity(req.userEmail, req.params.id, req.body.phrase);
+    const data = await loadDashboardData(req);
+    const assessment = await assessSingleGoal(req.userEmail, req.params.id, data);
+    res.json({ ok: true, goal, assessment });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

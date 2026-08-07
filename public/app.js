@@ -681,6 +681,8 @@ function applyBoundsToInputs() {
 // ---------- goals ----------
 
 let GOALS_LOADED = false;
+let GOALS_CACHE = null;              // { goals, assessment } — last loaded state
+const GOAL_THINKING = new Set();     // goal ids currently re-measuring in place
 
 function setupGoalsPage() {
   $('goals-btn').onclick = () => showView('goals');
@@ -712,8 +714,16 @@ function setupGoalsPage() {
 async function removeGoalById(id, text) {
   if (!confirm(`Delete this goal?\n\n"${text}"`)) return;
   await fetch('/api/goals/' + encodeURIComponent(id), { method: 'DELETE' });
-  GOALS_LOADED = false;
-  loadGoals(true);
+  // Server prunes the cached assessment too, so drop the card locally —
+  // no need to re-measure everything else.
+  if (GOALS_CACHE) {
+    GOALS_CACHE.goals = GOALS_CACHE.goals.filter((g) => g.id !== id);
+    GOALS_CACHE.assessment.goals = (GOALS_CACHE.assessment.goals || []).filter((g) => g.id !== id);
+    renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+  } else {
+    GOALS_LOADED = false;
+    loadGoals(true);
+  }
 }
 
 async function loadGoals(force) {
@@ -726,7 +736,8 @@ async function loadGoals(force) {
     const d = await (await fetch('/api/goals')).json();
     if (d.error) throw new Error(d.error);
     GOALS_LOADED = true;
-    renderGoals(d.goals || [], d.assessment || { goals: [] });
+    GOALS_CACHE = { goals: d.goals || [], assessment: d.assessment || { goals: [] } };
+    renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
   } catch (e) {
     el.innerHTML = `<p class="note">Couldn't load goals: ${esc(e.message)}</p>`;
   }
@@ -751,6 +762,13 @@ function renderGoals(goals, assessment) {
   el.innerHTML = `<div class="goal-cards">` + goals.map((g) => {
     const a = byId.get(g.id);
     let body;
+    if (GOAL_THINKING.has(g.id)) {
+      // Only this card re-thinks; everything else stays put
+      return `<div class="goal-card">
+        <p class="goal-text">${esc(g.text)}</p>
+        <div class="coach-loading" style="padding:8px 0">Re-measuring this goal<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>
+      </div>`;
+    }
     if (!a) {
       body = `<p class="note">${NEEDS_DATA
         ? 'Connect your Sheet and Doc to track progress on this.'
@@ -798,26 +816,42 @@ function renderGoals(goals, assessment) {
 
 // ---- tagging activities/habits as counting toward a goal ----
 
-async function linkGoalTag(id, phrase) {
-  phrase = String(phrase || '').trim();
-  if (!phrase) return;
-  await fetch(`/api/goals/${encodeURIComponent(id)}/link`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phrase }),
-  });
-  GOALS_LOADED = false;
-  loadGoals(true); // assessment was invalidated server-side, so this re-measures
+// Tag changes re-measure just the one goal, in place.
+async function goalTagChange(id, path, phrase) {
+  if (GOAL_THINKING.has(id)) return;
+  GOAL_THINKING.add(id);
+  if (GOALS_CACHE) renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+  try {
+    const r = await (await fetch(`/api/goals/${encodeURIComponent(id)}/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phrase }),
+    })).json();
+    if (r.error) throw new Error(r.error);
+    if (GOALS_CACHE) {
+      GOALS_CACHE.goals = GOALS_CACHE.goals.map((g) => (g.id === id ? r.goal : g));
+      GOALS_CACHE.assessment.goals = [
+        ...(GOALS_CACHE.assessment.goals || []).filter((g) => g.id !== id),
+        r.assessment,
+      ];
+    }
+  } catch (e) {
+    $('goals-list').insertAdjacentHTML('afterbegin', `<p class="errors">${esc(e.message)}</p>`);
+  } finally {
+    GOAL_THINKING.delete(id);
+    if (GOALS_CACHE) renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+    else { GOALS_LOADED = false; loadGoals(true); }
+  }
 }
 
-async function unlinkGoalTag(id, phrase) {
-  await fetch(`/api/goals/${encodeURIComponent(id)}/unlink`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phrase }),
-  });
-  GOALS_LOADED = false;
-  loadGoals(true);
+function linkGoalTag(id, phrase) {
+  phrase = String(phrase || '').trim();
+  if (!phrase) return;
+  goalTagChange(id, 'link', phrase);
+}
+
+function unlinkGoalTag(id, phrase) {
+  goalTagChange(id, 'unlink', phrase);
 }
 
 // Inline input with every known activity title + habit name as suggestions
