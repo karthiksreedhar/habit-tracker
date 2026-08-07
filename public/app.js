@@ -1546,6 +1546,7 @@ function render(data) {
   labelRecentWidgets(insights.recent);
   renderWinsFocus(insights);
   renderWeekdays(insights.weekdays);
+  ACT_WINDOWS = insights.recent.activityWindows || null;
   renderActivities(insights.recent.activities);
   ensureWidgetControls();
 }
@@ -1650,7 +1651,6 @@ function labelRecentWidgets(recent) {
   const labels = {
     sleep: 'Bedtime vs the midnight target',
     plant: 'Solo vs social sessions per day',
-    activities: 'Things you do repeatedly, ranked by how they actually rate',
   };
   for (const [id, text] of Object.entries(labels)) {
     const card = document.querySelector(`[data-widget="${id}"] .sub`);
@@ -1882,7 +1882,11 @@ function renderPlant(plant) {
       <text x="${padL - 6}" y="${y(v) + 3}" text-anchor="end" class="axis-label">${v}</text>`;
   }
   days.forEach((d, i) => {
-    const ttx = tt(fmtDate(d.date), [`Sessions: <b>${d.count}</b> (${d.solo} solo, ${d.social} social)`, d.score !== null ? `Day score: ${d.score}` : '']);
+    const ttx = tt(fmtDate(d.date), [
+      `Sessions: <b>${d.count}</b> (${d.solo} solo, ${d.social} social)`,
+      d.avgRating != null ? `Avg session rating: <b>${d.avgRating}</b>/10` : '',
+      d.score !== null ? `Day score: ${d.score}` : '',
+    ]);
     let cy = y(0);
     if (d.solo) {
       const h = cy - y(d.solo);
@@ -1896,6 +1900,17 @@ function renderPlant(plant) {
     g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" class="axis-label">${fmtDate(d.date)}</text>`;
   });
   g += `<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" stroke="var(--baseline)"/>`;
+  // Avg session rating per day (0-10) as a subtle line over the bars
+  const yR = (v) => 16 + (1 - v / 10) * (H - 50);
+  const rated = days.map((d, i) => (d.avgRating != null ? { i, v: d.avgRating, d } : null)).filter(Boolean);
+  if (rated.length) {
+    if (rated.length > 1) {
+      g += `<polyline points="${rated.map((r) => `${x(r.i)},${yR(r.v)}`).join(' ')}" fill="none" stroke="var(--yellow)" stroke-width="2" stroke-linejoin="round" opacity="0.9"/>`;
+    }
+    for (const r of rated) {
+      g += `<circle cx="${x(r.i)}" cy="${yR(r.v)}" r="3.5" fill="var(--yellow)" stroke="#fff" stroke-width="1.5" data-tt="${tt(fmtDate(r.d.date), [`Avg session rating: <b>${r.v}</b>/10`, `${r.d.count} session(s)`])}"/>`;
+    }
+  }
   const cmp = plant.avgScoreLowUse !== null && plant.avgScoreHighUse !== null
     ? `Days with ≤1 session average day score <b>${plant.avgScoreLowUse}</b> (n=${plant.nLow}); days with 2+ average <b>${plant.avgScoreHighUse}</b> (n=${plant.nHigh}).`
     : '';
@@ -1903,6 +1918,7 @@ function renderPlant(plant) {
     <div class="legend">
       <span class="key"><span class="swatch" style="background:var(--green)"></span>solo</span>
       <span class="key"><span class="swatch" style="background:var(--blue)"></span>with people</span>
+      <span class="key"><span class="swatch" style="background:var(--yellow);border-radius:999px"></span>avg rating (0–10)</span>
     </div>
     <p class="note" style="margin-top:8px">${plant.total} sessions total${plant.soloShare !== null ? ` · ${plant.soloShare}% solo` : ''}. ${cmp}</p>`;
 }
@@ -1941,9 +1957,30 @@ function renderWeekdays(weekdays) {
 // ---------- activities ----------
 // Things you actually repeat, ranked by how they rate. One-offs are noise here
 // (a single 10 isn't a pattern), so they get one compact line underneath.
-function renderActivities(acts) {
-  if (!acts.length) return emptyState('activities', 'No rated activities in the past week.', '⭐');
-  if (!acts.length) { $('activities').innerHTML = '<p class="note">No rated activities in the journal yet.</p>'; return; }
+// Timeframe is user-pickable: last week / last month / all time.
+let ACT_WINDOWS = null;
+
+function setActWindow(w) {
+  localStorage.setItem('actWindow', w);
+  renderActivities();
+}
+
+function renderActivities(actsLegacy) {
+  const choice = localStorage.getItem('actWindow') || 'week';
+  const win = ACT_WINDOWS ? (ACT_WINDOWS[choice] || ACT_WINDOWS.week) : { list: actsLegacy || [] };
+  const acts = win.list || [];
+
+  // subtitle: label + subtle timeframe toggle
+  const sub = document.querySelector('[data-widget="activities"] .sub');
+  if (sub && ACT_WINDOWS) {
+    const names = { week: 'Week', month: 'Month', all: 'All time' };
+    const range = win.start && win.end ? ` · ${fmtDate(win.start)}–${fmtDate(win.end)}` : '';
+    sub.innerHTML = `Things you do repeatedly, ranked by how they actually rate${esc(range)}
+      <span class="win-toggle">${['week', 'month', 'all'].map((k) =>
+        `<button class="${k === choice ? 'on' : ''}" onclick="setActWindow('${k}')">${names[k]}</button>`).join('')}</span>`;
+  }
+
+  if (!acts.length) return emptyState('activities', `No rated activities ${choice === 'all' ? 'in the journal yet' : `in the past ${choice === 'week' ? 'week' : 'month'}`}.`, '⭐');
   const recurring = acts.filter((a) => a.n >= 2).sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, 12);
   const oneOffs = acts.filter((a) => a.n === 1).sort((a, b) => b.avgRating - a.avgRating);
 
