@@ -27,9 +27,11 @@ const {
   getCoach, setChecked, replaceTodo,
   getWeeklyCoach, setWeeklyChecked, replaceWeeklyGoal,
   getAdherence, adherenceBlock,
+  getCachedDaily, getCachedWeekly,
   DEMO_EMAIL,
 } = require('./lib/coach');
 const { getUser, updateUser, deleteUserData } = require('./lib/db');
+const { nowInTz, userTz } = require('./lib/tz');
 const { getReport, listReports } = require('./lib/report');
 const { listGoals, addGoal, removeGoal, assessGoals, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
 const social = require('./lib/social');
@@ -434,7 +436,7 @@ async function fetchDocText(client, docUrl) {
 }
 
 async function loadDashboardData(req) {
-  const today = new Date();
+  const today = nowInTz(userTz(req)).date;
   const email = req.userEmail;
   const source = { habits: 'seed', journal: 'seed', errors: [] };
   let habitRows = null;
@@ -573,11 +575,16 @@ app.delete('/api/social/post/:pid', async (req, res) => {
 
 app.get('/api/coach', async (req, res) => {
   try {
+    // History view: read-only card for a past day, no generation
+    if (req.query.date) {
+      const card = await getCachedDaily(req.userEmail, String(req.query.date));
+      return res.json(card || { error: 'No coach card saved for that day.' });
+    }
     const data = await loadDashboardData(req);
     if (!hasData(data)) return res.json({ error: 'Add your habit tracker + journal links first (⚙︎ Widgets → Data sources).' });
     let widgetState = null;
     try { widgetState = (await getUser(req.userEmail))?.widgetState || null; } catch {}
-    const card = await getCoach(req.userEmail, { ...data, widgetState, force: req.query.refresh === '1' });
+    const card = await getCoach(req.userEmail, { ...data, widgetState, tz: userTz(req), force: req.query.refresh === '1' });
     res.json({ ...card, adherence: await getAdherence(req.userEmail) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -597,7 +604,7 @@ app.post('/api/coach/fail', async (req, res) => {
   try {
     const { date, index } = req.body;
     const data = await loadDashboardData(req);
-    res.json(await replaceTodo(req.userEmail, { date, index: Number(index), ...data }));
+    res.json(await replaceTodo(req.userEmail, { date, index: Number(index), tz: userTz(req), ...data }));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -605,6 +612,10 @@ app.post('/api/coach/fail', async (req, res) => {
 
 app.get('/api/coach/weekly', async (req, res) => {
   try {
+    if (req.query.week) {
+      const card = await getCachedWeekly(req.userEmail, String(req.query.week));
+      return res.json(card || { error: 'No weekly card saved for that week.' });
+    }
     const data = await loadDashboardData(req);
     if (!hasData(data)) return res.json({ error: 'Add your habit tracker + journal links first (⚙︎ Widgets → Data sources).' });
     // Stated goals steer the weekly card
@@ -616,7 +627,7 @@ app.get('/api/coach/weekly', async (req, res) => {
         goalsBlock = goalsPromptBlock(goals, user && user.goalAssessment);
       }
     } catch {}
-    const card = await getWeeklyCoach(req.userEmail, { ...data, goalsBlock, force: req.query.refresh === '1' });
+    const card = await getWeeklyCoach(req.userEmail, { ...data, goalsBlock, tz: userTz(req), force: req.query.refresh === '1' });
     res.json({ ...card, adherence: await getAdherence(req.userEmail) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -636,7 +647,7 @@ app.post('/api/coach/weekly/fail', async (req, res) => {
   try {
     const { week, index } = req.body;
     const data = await loadDashboardData(req);
-    res.json(await replaceWeeklyGoal(req.userEmail, { week, index: Number(index), ...data }));
+    res.json(await replaceWeeklyGoal(req.userEmail, { week, index: Number(index), tz: userTz(req), ...data }));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -710,6 +721,7 @@ app.get('/api/report', async (req, res) => {
     let followThrough = '';
     try { followThrough = adherenceBlock(await getAdherence(req.userEmail)); } catch {}
     res.json(await getReport(req.userEmail, {
+      tz: userTz(req),
       ...data,
       goalsBlock: goalsBlock + followThrough,
       start: ISO_DATE.test(req.query.start || '') ? req.query.start : null,

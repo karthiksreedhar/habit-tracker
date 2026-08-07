@@ -1,5 +1,16 @@
 /* Life Dashboard front-end. Fetches /api/data and renders everything. */
 
+// Every API call carries the browser's timezone so "today" is the user's
+// today, not the server's (Vercel runs in UTC).
+{
+  const nativeFetch = window.fetch.bind(window);
+  const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })();
+  window.fetch = (url, opts = {}) => {
+    opts.headers = { ...(opts.headers || {}), ...(TZ ? { 'X-TZ': TZ } : {}) };
+    return nativeFetch(url, opts);
+  };
+}
+
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (iso) => { const [, m, d] = iso.split('-'); return `${+m}/${+d}`; };
@@ -386,6 +397,7 @@ async function loadCoach(refresh) {
       return;
     }
     COACH = c;
+    COACH_LATEST = c.date;
     renderCoach();
     renderWidgetMenu();
     applyWidgets();
@@ -394,10 +406,35 @@ async function loadCoach(refresh) {
   }
 }
 
+// Subtle ‹ › arrows for stepping through saved cards. `latest` pins the
+// "current" card; past cards are read-only-ish (checks allowed, swaps not).
+function coachNavHtml(kind, available, current, latest) {
+  const av = available || [];
+  const idx = av.indexOf(current);
+  if (av.length < 2 || idx === -1) return '';
+  const prev = idx > 0 ? av[idx - 1] : null;
+  const next = idx < av.length - 1 ? av[idx + 1] : null;
+  return `<span class="coach-nav">
+    <button ${prev ? '' : 'disabled'} onclick="${kind}Nav('${prev || ''}')" title="Earlier">‹</button>
+    <button ${next ? '' : 'disabled'} onclick="${kind}Nav('${next || ''}')" title="Later">›</button>
+  </span>`;
+}
+
+let COACH_LATEST = null;
+async function coachNav(key) {
+  if (!key) return;
+  if (key === COACH_LATEST) { loadCoach(false); return; }
+  const c = await (await fetch('/api/coach?date=' + encodeURIComponent(key))).json();
+  if (c.error || !Array.isArray(c.todos)) return;
+  COACH = c;
+  renderCoach();
+}
+
 function renderCoach(justCheckedIdx = -1) {
   const c = COACH;
+  const isPast = COACH_LATEST && c.date !== COACH_LATEST;
   const done = (c.checked || []).filter(Boolean).length;
-  let html = `<h2>Daily Coach</h2>`;
+  let html = `<h2>Daily Coach${isPast ? ` · ${esc(fmtDate(c.date))}` : ''}${coachNavHtml('coach', c.available, c.date, COACH_LATEST)}</h2>`;
   html += `<p class="coach-headline">${esc(c.headline)}</p>`;
   if (c.insight) html += `<p class="coach-insight">💡 ${esc(c.insight)}</p>`;
   html += `<div class="coach-todos">` + c.todos.map((t, i) => {
@@ -406,7 +443,7 @@ function renderCoach(justCheckedIdx = -1) {
     }
     return `<div class="todo ${c.checked[i] ? 'done' : ''} ${i === justCheckedIdx ? 'just-checked' : ''}" data-i="${i}" data-tt="${tt('Why', [t.why])}">
       <span class="box">${c.checked[i] ? '✓' : ''}</span><span class="txt">${esc(t.text)}</span>
-      ${c.checked[i] ? '' : `<button class="fail-x" data-i="${i}" title="Already failed — swap for a new one">✕</button>`}
+      ${c.checked[i] || isPast ? '' : `<button class="fail-x" data-i="${i}" title="Already failed — swap for a new one">✕</button>`}
     </div>`;
   }).join('') + `</div>`;
   if (c.follow_through && c.follow_through.length) {
@@ -431,7 +468,7 @@ function renderCoach(justCheckedIdx = -1) {
     <span class="progress">${done}/${c.todos.length} done</span>${adNote}
     <span>Generated ${new Date(c.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
     <span class="spacer"></span>
-    <button onclick="loadCoach(true)">↻ Refresh</button>
+    ${isPast ? `<button onclick="coachNav(COACH_LATEST)">↩ Back to today</button>` : `<button onclick="loadCoach(true)">↻ Refresh</button>`}
   </div>`;
   $('coach').innerHTML = html;
   $('coach').querySelectorAll('.todo[data-i]').forEach((row) => {
@@ -459,16 +496,28 @@ async function loadWeeklyCoach(refresh) {
       return;
     }
     WEEKLY = w;
+    WEEKLY_LATEST = w.week;
     renderWeeklyCoach();
   } catch (e) {
     el.innerHTML = `<h2>Weekly Coach</h2><p class="note">Weekly coach unavailable: ${esc(e.message)}</p>`;
   }
 }
 
+let WEEKLY_LATEST = null;
+async function weeklyNav(key) {
+  if (!key) return;
+  if (key === WEEKLY_LATEST) { loadWeeklyCoach(false); return; }
+  const w = await (await fetch('/api/coach/weekly?week=' + encodeURIComponent(key))).json();
+  if (w.error || !Array.isArray(w.goals)) return;
+  WEEKLY = w;
+  renderWeeklyCoach();
+}
+
 function renderWeeklyCoach(justCheckedIdx = -1) {
   const w = WEEKLY;
+  const isPast = WEEKLY_LATEST && w.week !== WEEKLY_LATEST;
   const done = (w.checked || []).filter(Boolean).length;
-  let html = `<h2>Weekly Coach · ${esc(w.week)}</h2>`;
+  let html = `<h2>Weekly Coach · ${esc(w.week)}${coachNavHtml('weekly', w.available, w.week, WEEKLY_LATEST)}</h2>`;
   html += `<p class="coach-headline">${esc(w.headline)}</p>`;
   if (w.last_week && w.last_week.length) {
     html += w.last_week.map((b) => `<p class="coach-insight">• ${esc(b.text)}</p>`).join('');
@@ -479,7 +528,7 @@ function renderWeeklyCoach(justCheckedIdx = -1) {
     }
     return `<div class="todo ${w.checked[i] ? 'done' : ''} ${i === justCheckedIdx ? 'just-checked' : ''}" data-i="${i}" data-tt="${tt('Why', [g.why])}">
       <span class="box">${w.checked[i] ? '✓' : ''}</span><span class="txt">${esc(g.text)}</span>
-      ${w.checked[i] ? '' : `<button class="fail-x" data-i="${i}" title="Not happening this week — swap it">✕</button>`}
+      ${w.checked[i] || isPast ? '' : `<button class="fail-x" data-i="${i}" title="Not happening this week — swap it">✕</button>`}
     </div>`;
   }).join('') + `</div>`;
   if (w.experiment) {
@@ -493,7 +542,7 @@ function renderWeeklyCoach(justCheckedIdx = -1) {
     <span class="progress">${done}/${w.goals.length} weekly goals</span>${wNote}
     <span>Generated ${new Date(w.generatedAt).toLocaleDateString(undefined, { weekday: 'short' })} ${new Date(w.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
     <span class="spacer"></span>
-    <button onclick="loadWeeklyCoach(true)">↻ Refresh</button>
+    ${isPast ? `<button onclick="weeklyNav(WEEKLY_LATEST)">↩ Back to this week</button>` : `<button onclick="loadWeeklyCoach(true)">↻ Refresh</button>`}
   </div>`;
   $('weekly-coach').innerHTML = html;
   $('weekly-coach').querySelectorAll('.todo[data-i]').forEach((row) => {

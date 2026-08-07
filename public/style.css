@@ -742,3 +742,13 @@ tr:last-child td { border-bottom: none; }
 .danger-zone { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--grid); }
 .danger-zone button { margin-left: 8px; font-size: 12px; color: var(--critical); border-color: #f5c6c4; }
 .danger-zone button:hover { background: var(--critical); color: #fff; border-color: transparent; }
+
+/* ---------- coach history nav ---------- */
+.coach-nav { display: inline-flex; gap: 0; margin-left: 8px; vertical-align: 1px; }
+.coach-nav button {
+  border: none; background: none; box-shadow: none;
+  padding: 0 5px; font-size: 15px; line-height: 1;
+  color: var(--muted); opacity: 0.4; cursor: pointer;
+}
+.coach-nav button:hover:not(:disabled) { opacity: 1; color: var(--green-dark); transform: none; box-shadow: none; background: none; }
+.coach-nav button:disabled { opacity: 0.12; cursor: default; }
