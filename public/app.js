@@ -1303,6 +1303,8 @@ function setupDataPage() {
   // link/format controls collapse behind this toggle.
   const hasLinks = !!(STATUS.sheetUrl || STATUS.docUrl);
   $('sources-panel').style.display = hasLinks ? 'none' : '';
+  // First-time setup: show the suggested formats for both files up front
+  if (!hasLinks) $('format-help').style.display = '';
   $('toggle-sources').onclick = () => {
     const p = $('sources-panel');
     p.style.display = p.style.display === 'none' ? '' : 'none';
