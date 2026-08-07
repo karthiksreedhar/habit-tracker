@@ -70,6 +70,15 @@ async function boot() {
   // Always land on the widget dashboard; banners handle any setup nudges
   showView('dashboard');
 
+  // Sheet notes: ask once via popup, then expose the switch on the Data page
+  if (data.notesPrompt) showNotesModal(data.notesDetected || []);
+  if ((data.notesDetected || []).length && !STATUS.demo) {
+    $('notes-consent-row').style.display = 'flex';
+    $('notes-consent-cb').checked = data.notesConsent === 'granted';
+    $('notes-consent-label').textContent =
+      `Use the “${(data.notesDetected || []).join('”, “')}” column from my sheet as context for the coach & reports`;
+  }
+
   if (NEEDS_DATA) {
     emptyCoach('coach', 'Daily Coach', NEEDS_SETUP
       ? 'Connect your Sheet and Doc, and today\'s plan shows up here.'
@@ -1507,6 +1516,25 @@ async function runPreview() {
   } catch (e) {
     $('preview-body').innerHTML = `<p class="note">Couldn't read your sources: ${esc(e.message)}</p>`;
   }
+}
+
+// ---------- sheet-notes consent ----------
+
+function showNotesModal(cols) {
+  $('notes-modal-cols').textContent = cols.length === 1
+    ? `Column found: “${cols[0]}”`
+    : `Columns found: ${cols.map((c) => `“${c}”`).join(', ')}`;
+  $('notes-modal').classList.add('open');
+}
+
+async function notesConsent(granted) {
+  await fetch('/api/notes-consent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ granted }),
+  });
+  $('notes-modal').classList.remove('open');
+  location.reload(); // re-pull data with the new setting applied
 }
 
 function toggleFormatHelp() {

@@ -322,10 +322,25 @@ app.get('/api/parse-debug', async (req, res) => {
         header: habitRows.length ? habitRows[0].filter(Boolean).slice(0, 30) : [],
         habitNames: habits.habitNames,
         daysParsed: habits.days.length,
+        notesColumns: habits.notesColumns || [],
+        notedDays: habits.days.filter((d) => d.note).length,
       },
       notes,
       hasDoc: !!journalText,
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/notes-consent', async (req, res) => {
+  try {
+    const granted = !!req.body.granted;
+    await updateUser(req.userEmail, {
+      notesConsent: granted ? 'granted' : 'declined',
+      notesConsentAt: new Date().toISOString(),
+    });
+    res.json({ ok: true, notesConsent: granted ? 'granted' : 'declined' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -458,10 +473,12 @@ async function loadDashboardData(req) {
   let journalText = null;
   let needsSetup = false;
   let needsConfirm = false;
+  let notesConsent = null; // 'granted' | 'declined' | null (never asked)
   const missing = []; // which of the two source links are absent
 
   if (email !== DEMO_EMAIL) {
     const user = await getUser(email);
+    notesConsent = user && user.notesConsent ? user.notesConsent : null;
     const client = authedClientForUser(req, user);
     if (!user || !user.sheetUrl) missing.push('sheet');
     if (!user || !user.docUrl) missing.push('doc');
@@ -495,8 +512,22 @@ async function loadDashboardData(req) {
 
   const habits = parseHabitRows(habitRows, today);
   const journal = parseJournal(journalText);
+
+  // Sheet notes are consent-gated: detected columns are reported so the UI
+  // can ask, but the note text only flows onward after an explicit yes.
+  const notesDetected = habits.notesColumns || [];
+  const demo = email === DEMO_EMAIL;
+  if (!demo && notesConsent !== 'granted') {
+    for (const d of habits.days) d.note = null;
+  }
+  const notesPrompt = !demo && notesDetected.length > 0 && notesConsent === null;
+
   const insights = buildInsights(habits, journal);
-  return { source, needsSetup, needsConfirm, missing, fetchedAt: today.toISOString(), habits, journal, insights };
+  return {
+    source, needsSetup, needsConfirm, missing,
+    notesDetected, notesConsent, notesPrompt,
+    fetchedAt: today.toISOString(), habits, journal, insights,
+  };
 }
 
 const hasData = (d) => d.habits.days.length || d.journal.length;

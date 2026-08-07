@@ -90,6 +90,10 @@
         <div class="field"><label>Daily journal — Google Doc URL</label>
           <input id="doc-url" placeholder="https://docs.google.com/document/d/…"></div>
       </div>
+      <label id="notes-consent-row" style="display:none;align-items:center;gap:8px;margin:2px 0 10px;cursor:pointer;font-size:12.5px;color:var(--ink-2)">
+        <input type="checkbox" id="notes-consent-cb" style="accent-color:var(--green)" onchange="notesConsent(this.checked)">
+        <span id="notes-consent-label"></span>
+      </label>
       <div class="preview-actions">
         <button class="primary" onclick="saveAndCheck()">Save &amp; check my data</button>
         <button onclick="runPreview()">↻ Re-check reads</button>
@@ -230,6 +234,18 @@
 </section>
 </div>
 
+
+<div id="notes-modal">
+  <div class="notes-card">
+    <h2>📝 Found notes in your habit tracker</h2>
+    <p class="sub" id="notes-modal-cols"></p>
+    <p>Want me to read that as context for your coach, reports and goals? It's qualitative only — it never changes your numbers — and you can flip this any time on the 🔗 Data page.</p>
+    <div class="preview-actions">
+      <button class="primary" onclick="notesConsent(true)">✓ Use my notes</button>
+      <button onclick="notesConsent(false)">Ignore them</button>
+    </div>
+  </div>
+</div>
 
 <div id="drawer-backdrop"></div>
 <aside id="drawer">
