@@ -1547,6 +1547,7 @@ function render(data) {
   renderWinsFocus(insights);
   renderWeekdays(insights.weekdays);
   ACT_WINDOWS = insights.recent.activityWindows || null;
+  PLANT_WINDOWS = insights.recent.plantWindows || null;
   renderActivities(insights.recent.activities);
   ensureWidgetControls();
 }
@@ -1650,7 +1651,6 @@ function labelRecentWidgets(recent) {
   const badge = `<span class="window-pill">Past week · ${esc(range)}</span>`;
   const labels = {
     sleep: 'Bedtime vs the midnight target',
-    plant: 'Solo vs social sessions per day',
   };
   for (const [id, text] of Object.entries(labels)) {
     const card = document.querySelector(`[data-widget="${id}"] .sub`);
@@ -1867,10 +1867,31 @@ function renderSleep(sleep, kpis) {
 }
 
 // ---------- plant ----------
-function renderPlant(plant) {
-  if (!plant.daily.length) return emptyState('plant', 'No sessions logged in the past week.', '🌱');
+let PLANT_WINDOWS = null;
+
+function setPlantWindow(w) {
+  localStorage.setItem('plantWindow', w);
+  renderPlant();
+}
+
+function renderPlant(plantLegacy) {
+  const choice = localStorage.getItem('plantWindow') || 'week';
+  const win = PLANT_WINDOWS ? (PLANT_WINDOWS[choice] || PLANT_WINDOWS.week) : { plant: plantLegacy };
+  const plant = win.plant || plantLegacy;
+
+  const sub = document.querySelector('[data-widget="plant"] .sub');
+  if (sub && PLANT_WINDOWS) {
+    const names = { week: 'Week', month: 'Month', all: 'All time' };
+    const range = win.start && win.end ? ` · ${fmtDate(win.start)}–${fmtDate(win.end)}` : '';
+    sub.innerHTML = `Solo vs social sessions per day${esc(range)}
+      <span class="win-toggle">${['week', 'month', 'all'].map((k) =>
+        `<button class="${k === choice ? 'on' : ''}" onclick="setPlantWindow('${k}')">${names[k]}</button>`).join('')}</span>`;
+  }
+
+  if (!plant || !plant.daily.length || !plant.total) {
+    return emptyState('plant', `No sessions logged ${choice === 'all' ? 'yet' : `in the past ${choice === 'week' ? 'week' : 'month'}`}.`, '🌱');
+  }
   const days = plant.daily;
-  if (!days.length || !plant.total) { $('plant').innerHTML = '<p class="note">No 🌱 sessions in the journal — nothing to chart.</p>'; return; }
   const W = 520, H = 170, padL = 30, padR = 12;
   const maxC = Math.max(...days.map((d) => d.count), 3);
   const y = (v) => 16 + (1 - v / maxC) * (H - 50);
@@ -1981,8 +2002,11 @@ function renderActivities(actsLegacy) {
   }
 
   if (!acts.length) return emptyState('activities', `No rated activities ${choice === 'all' ? 'in the journal yet' : `in the past ${choice === 'week' ? 'week' : 'month'}`}.`, '⭐');
-  const recurring = acts.filter((a) => a.n >= 2).sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, 12);
-  const oneOffs = acts.filter((a) => a.n === 1).sort((a, b) => b.avgRating - a.avgRating);
+  // All time: strictly repeated activities (2+), top 10 — otherwise the list
+  // is one-offs all the way down.
+  const cap = choice === 'all' ? 10 : 12;
+  const recurring = acts.filter((a) => a.n >= 2).sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, cap);
+  const oneOffs = choice === 'all' ? [] : acts.filter((a) => a.n === 1).sort((a, b) => b.avgRating - a.avgRating);
 
   let html = '';
   if (recurring.length) {
