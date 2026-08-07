@@ -779,3 +779,12 @@ tr:last-child td { border-bottom: none; }
 }
 .notes-card h2 { font-size: 16px; margin: 0 0 4px; text-transform: none; letter-spacing: 0; color: var(--ink); }
 .notes-card p { color: var(--ink-2); font-size: 13.5px; }
+
+/* ---------- saved-reports picker ---------- */
+#report-saved-wrap { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+#report-saved {
+  font: inherit; font-size: 12.5px; padding: 6px 10px; max-width: 240px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--ink); cursor: pointer;
+}
+#report-saved:focus { outline: none; border-color: var(--green); }

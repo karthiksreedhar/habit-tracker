@@ -152,6 +152,7 @@ const WIDGETS = [
   ['impact', 'What makes a good day'],
   ['people', 'People'],
   ['places', 'Places'],
+  ['weather', '🌡️ Weather vs day score'],
   ['sleep', 'Sleep'],
   ['plant', '🌱 Sessions'],
   ['wins', 'Wins'],
@@ -658,10 +659,61 @@ let REPORT = null;
 
 let REPORT_BOUNDS = null;
 
+let REPORT_SAVED = [];
+
 function setupReportPage() {
   $('report-btn').onclick = () => showView('report');
   $('report-generate').onclick = () => loadReport(true);
   $('report-reset').onclick = () => { applyBoundsToInputs(); loadReport(true); };
+  $('report-saved').onchange = (e) => {
+    const r = REPORT_SAVED[Number(e.target.value)];
+    if (!r) return;
+    REPORT = r;
+    if (r.periodStart) $('report-start').value = r.periodStart;
+    if (r.periodEnd) $('report-end').value = r.periodEnd;
+    renderReport(r);
+  };
+}
+
+// The shelf: every stored report, newest first
+async function refreshSavedReports(selectedGeneratedAt) {
+  try {
+    const d = await (await fetch('/api/report/saved')).json();
+    REPORT_SAVED = d.reports || [];
+  } catch { REPORT_SAVED = []; }
+  const wrap = $('report-saved-wrap');
+  if (REPORT_SAVED.length < 2) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  $('report-saved').innerHTML = REPORT_SAVED.map((r, i) => {
+    const gen = new Date(r.generatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return `<option value="${i}" ${r.generatedAt === selectedGeneratedAt ? 'selected' : ''}>${esc(fmtDate(r.periodStart))}–${esc(fmtDate(r.periodEnd))} · gen ${esc(gen)}</option>`;
+  }).join('');
+}
+
+// Download the rendered report as a standalone styled HTML file
+async function downloadReport() {
+  if (!REPORT || !REPORT.title) return;
+  let css = '';
+  try { css = await (await fetch('style.css')).text(); } catch {}
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Life Report · ${esc(REPORT.periodStart)} – ${esc(REPORT.periodEnd)}</title>
+<style>${css}
+.no-print { display: none !important; }
+body { background: #fff; }
+.wrap { padding: 32px 24px; max-width: 900px; }
+#report-body { border: none; box-shadow: none; padding: 0; }
+</style></head>
+<body><div class="wrap"><div id="report-body">${$('report-body').innerHTML}</div></div></body></html>`;
+  const blob = new Blob([html], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `life-report-${REPORT.periodStart}_${REPORT.periodEnd}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
 // Default range = every day you've logged, through today
@@ -1315,6 +1367,7 @@ async function loadReport(generate) {
     if (r.periodStart) $('report-start').value = r.periodStart;
     if (r.periodEnd) $('report-end').value = r.periodEnd;
     renderReport(r);
+    refreshSavedReports(r.generatedAt);
   } catch (e) {
     el.innerHTML = `<p class="note">Report unavailable: ${esc(e.message)}</p>`;
   }
@@ -1609,6 +1662,7 @@ function render(data) {
   labelRecentWidgets(insights.recent);
   renderWinsFocus(insights);
   renderWeekdays(insights.weekdays);
+  loadWeather(); // async — fills the weather widget when the API answers
   ACT_WINDOWS = insights.recent.activityWindows || null;
   PLANT_WINDOWS = insights.recent.plantWindows || null;
   renderActivities(insights.recent.activities);
@@ -2005,6 +2059,67 @@ function renderPlant(plantLegacy) {
       <span class="key"><span class="swatch" style="background:var(--yellow);border-radius:999px"></span>avg rating (0–10)</span>
     </div>
     <p class="note" style="margin-top:8px">${plant.total} sessions total${plant.soloShare !== null ? ` · ${plant.soloShare}% solo` : ''}. ${cmp}</p>`;
+}
+
+// ---------- weather vs day score ----------
+// Two lines, two scales: score (0-10, left axis, green) and that city's mean
+// temperature that day (°F, right axis, orange). Data via /api/weather.
+
+async function loadWeather() {
+  try {
+    const w = await (await fetch('/api/weather')).json();
+    if (w.error) throw new Error(w.error);
+    renderWeather(w);
+  } catch (e) {
+    $('weather').innerHTML = `<p class="note">Weather unavailable: ${esc(e.message)}</p>`;
+  }
+}
+
+function renderWeather(w) {
+  const days = (w.days || []).filter((d) => d.tempF != null || d.score != null);
+  if (!days.length) return emptyState('weather', 'Log a city on your day lines (e.g. "08/07/26 | 7 | NYC") and temperatures show up here.', '🌡️');
+  if (!days.some((d) => d.tempF != null)) {
+    return emptyState('weather', 'No temperatures found yet for your logged cities — very recent days can lag a couple of days.', '🌡️');
+  }
+  const W = 520, H = 190, padL = 30, padR = 36;
+  const x = (i) => padL + (i + 0.5) * ((W - padL - padR) / days.length);
+  const yS = (v) => 16 + (1 - v / 10) * (H - 52);
+  const temps = days.filter((d) => d.tempF != null).map((d) => d.tempF);
+  const tLo = Math.min(...temps) - 4, tHi = Math.max(...temps) + 4;
+  const yT = (v) => 16 + (1 - (v - tLo) / Math.max(tHi - tLo, 1)) * (H - 52);
+  let g = '';
+  for (const v of [0, 5, 10]) {
+    g += `<line x1="${padL}" x2="${W - padR}" y1="${yS(v)}" y2="${yS(v)}" stroke="var(--grid)"/>
+      <text x="${padL - 5}" y="${yS(v) + 3}" text-anchor="end" class="axis-label">${v}</text>`;
+  }
+  for (const v of [Math.round(tLo + 4), Math.round(tHi - 4)]) {
+    g += `<text x="${W - padR + 6}" y="${yT(v) + 3}" class="axis-label" fill="var(--yellow)">${v}°</text>`;
+  }
+  const tPts = days.map((d, i) => (d.tempF != null ? `${x(i)},${yT(d.tempF)}` : null)).filter(Boolean);
+  if (tPts.length > 1) g += `<polyline points="${tPts.join(' ')}" fill="none" stroke="var(--yellow)" stroke-width="2.5" stroke-linejoin="round" opacity="0.9"/>`;
+  const sPts = days.map((d, i) => (d.score != null ? `${x(i)},${yS(d.score)}` : null)).filter(Boolean);
+  if (sPts.length > 1) g += `<polyline points="${sPts.join(' ')}" fill="none" stroke="var(--green)" stroke-width="2" stroke-linejoin="round"/>`;
+  days.forEach((d, i) => {
+    const ttx = tt(`${fmtDate(d.date)} · ${esc(d.city)}`, [
+      d.tempF != null ? `Avg temp: <b>${d.tempF}°F</b>${d.tmaxF != null ? ` (high ${d.tmaxF}°)` : ''}` : 'No temperature data',
+      d.score != null ? `Day score: <b>${d.score}</b>` : 'No day score',
+      d.resolved ? `Resolved as ${esc(d.resolved)}` : '',
+    ]);
+    if (d.tempF != null) g += `<circle cx="${x(i)}" cy="${yT(d.tempF)}" r="3.5" fill="var(--yellow)" stroke="#fff" stroke-width="1.5" data-tt="${ttx}"/>`;
+    if (d.score != null) g += `<circle cx="${x(i)}" cy="${yS(d.score)}" r="3.5" fill="var(--green)" stroke="#fff" stroke-width="1.5" data-tt="${ttx}"/>`;
+    if (days.length <= 16 || i % 2 === 0) {
+      g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" class="axis-label">${fmtDate(d.date)}</text>`;
+    }
+  });
+  const corr = w.correlation && w.correlation.r != null
+    ? `Temperature and day score move ${w.correlation.r > 0.15 ? 'together' : w.correlation.r < -0.15 ? 'in opposite directions' : 'independently'} so far (r=${w.correlation.r}, ${w.correlation.n} days).`
+    : 'Not enough overlapping days yet to see a temperature pattern.';
+  $('weather').innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg>
+    <div class="legend">
+      <span class="key"><span class="swatch" style="background:var(--green);border-radius:999px"></span>day score (0–10)</span>
+      <span class="key"><span class="swatch" style="background:var(--yellow);border-radius:999px"></span>avg temp (°F)</span>
+    </div>
+    <p class="note" style="margin-top:8px">${corr}</p>`;
 }
 
 // ---------- wins / focus ----------

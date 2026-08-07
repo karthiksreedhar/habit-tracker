@@ -33,6 +33,7 @@ const {
 const { getUser, updateUser, deleteUserData } = require('./lib/db');
 const { nowInTz, userTz } = require('./lib/tz');
 const { getReport, listReports } = require('./lib/report');
+const { weatherSeries } = require('./lib/weather');
 const { listGoals, addGoal, removeGoal, assessGoals, assessSingleGoal, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
 const social = require('./lib/social');
 
@@ -759,6 +760,25 @@ app.delete('/api/goals/:id', async (req, res) => {
 });
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Temperature vs day score, from the cities in the journal
+app.get('/api/weather', async (req, res) => {
+  try {
+    const data = await loadDashboardData(req);
+    res.json(await weatherSeries(data.journal));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Every generated report is kept (last 24) — this returns the full shelf.
+app.get('/api/report/saved', async (req, res) => {
+  try {
+    res.json({ reports: await listReports(req.userEmail) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.get('/api/report', async (req, res) => {
   try {

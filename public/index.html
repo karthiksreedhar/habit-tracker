@@ -182,6 +182,12 @@
       <div id="places"></div>
     </div>
 
+    <div class="card span6" data-widget="weather">
+      <h2>🌡️ Weather &amp; your days</h2>
+      <p class="sub">Daily temperature in whatever city you were in, against your day score</p>
+      <div id="weather"><div class="coach-loading">Checking the weather where you were<span class="dots"><i>.</i><i>.</i><i>.</i></span></div></div>
+    </div>
+
     <div class="card span6" data-widget="sleep">
       <h2>Sleep</h2>
       <p class="sub">Bedtime vs the midnight target</p>
@@ -220,6 +226,7 @@
   <div class="view-head no-print">
     <h2>📄 Life Report</h2>
     <div style="display:flex;gap:8px;align-items:center">
+      <button id="report-download" title="Download this report as a file" onclick="downloadReport()">⬇ Save file</button>
       <button onclick="window.print()">Print / PDF</button>
       <button class="icon-btn" onclick="showView('dashboard')" title="Back to dashboard">✕</button>
     </div>
@@ -229,6 +236,7 @@
     <label>To <input type="date" id="report-end"></label>
     <button class="primary" id="report-generate">Generate report</button>
     <button id="report-reset" title="Back to all logged data">All data</button>
+    <label id="report-saved-wrap" style="display:none">📁 <select id="report-saved" title="Saved reports"></select></label>
   </div>
   <div id="report-body"></div>
 </section>
