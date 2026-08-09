@@ -1,10 +1,19 @@
 {
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
   ],
   "functions": {
     "api/index.js": {
       "maxDuration": 300
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/morning",
+      "schedule": "0 10 * * *"
+    }
+  ]
 }

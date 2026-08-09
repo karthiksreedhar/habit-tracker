@@ -27,10 +27,10 @@ const {
   getCoach, setChecked, replaceTodo,
   getWeeklyCoach, setWeeklyChecked, replaceWeeklyGoal,
   getAdherence, adherenceBlock,
-  getCachedDaily, getCachedWeekly,
+  getCachedDaily, getCachedWeekly, isoWeekKey,
   DEMO_EMAIL,
 } = require('./lib/coach');
-const { getUser, updateUser, deleteUserData } = require('./lib/db');
+const { getUser, updateUser, deleteUserData, getDb, loadCoachCache } = require('./lib/db');
 const { nowInTz, userTz } = require('./lib/tz');
 const { getReport, listReports } = require('./lib/report');
 const { weatherSeries } = require('./lib/weather');
@@ -127,6 +127,7 @@ function userEmailFor(req) {
 // Gate /api/* (except status) behind a user identity.
 app.use('/api', (req, res, next) => {
   if (req.path === '/status') return next();
+  if (req.path.startsWith('/cron/')) return next(); // cron auths via CRON_SECRET
   const email = userEmailFor(req);
   if (!email) return res.status(401).json({ error: 'Not signed in', loginRequired: true });
   req.userEmail = email;
@@ -557,6 +558,8 @@ async function refreshSocialSnapshot(email, data) {
 app.get('/api/data', async (req, res) => {
   try {
     const data = await loadDashboardData(req);
+    const tz = userTz(req);
+    if (tz && req.userEmail !== DEMO_EMAIL) updateUser(req.userEmail, { tz }).catch(() => {});
     // If both sources fetched cleanly and parsed real days, the read is
     // self-evidently fine — confirm silently instead of nagging forever.
     if (data.needsConfirm && !data.source.errors.length
@@ -763,6 +766,106 @@ app.delete('/api/goals/:id', async (req, res) => {
 });
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// ---------- morning cron: pre-generate coach cards for every user ----------
+// Vercel Cron hits this daily (see vercel.json). Auth: Vercel sends
+// "Authorization: Bearer $CRON_SECRET" when that env var is set.
+
+app.get('/api/cron/morning', async (req, res) => {
+  if (process.env.CRON_SECRET) {
+    if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+      return res.status(401).json({ error: 'bad cron auth' });
+    }
+  } else if (!demoMode()) {
+    return res.status(401).json({ error: 'CRON_SECRET not configured' });
+  }
+  try {
+    const db = await getDb();
+    const users = await db.collection('users')
+      .find(
+        { tokens: { $exists: true }, $or: [{ sheetUrl: { $ne: null } }, { docUrl: { $ne: null } }] },
+        { projection: { email: 1, tz: 1 } }
+      ).limit(50).toArray();
+
+    const results = await Promise.allSettled(users.map(async (u) => {
+      const email = u.email;
+      const tz = u.tz || null;
+      const todayKey = nowInTz(tz).key;
+      const weekKey = isoWeekKey(nowInTz(tz).date);
+
+      // Cheap pre-check: nothing to do if both cards already exist
+      let cache = null;
+      try { cache = await loadCoachCache(email); } catch {}
+      const hasDaily = !!(cache && cache.days && cache.days[todayKey]);
+      const hasWeekly = !!(cache && cache.weeks && cache.weeks[weekKey]);
+      if (hasDaily && hasWeekly) return { email, daily: 'cached', weekly: 'cached' };
+
+      // Fake request: enough for data loading + tz-aware generation
+      const fakeReq = { userEmail: email, headers: { 'x-tz': tz || '' }, query: {}, protocol: 'https' };
+      const data = await loadDashboardData(fakeReq);
+      if (!hasData(data)) return { email, daily: 'no-data', weekly: 'no-data' };
+
+      const out = { email, daily: 'cached', weekly: 'cached' };
+      if (!hasDaily) {
+        const user = await getUser(email);
+        await getCoach(email, { ...data, widgetState: (user && user.widgetState) || null, tz });
+        out.daily = 'generated';
+      }
+      if (!hasWeekly) {
+        let goalsBlock = '';
+        try {
+          const goals = await listGoals(email);
+          if (goals.length) {
+            const user = await getUser(email);
+            goalsBlock = goalsPromptBlock(goals, user && user.goalAssessment);
+          }
+        } catch {}
+        await getWeeklyCoach(email, { ...data, goalsBlock, tz });
+        out.weekly = 'generated';
+      }
+      return out;
+    }));
+
+    res.json({
+      ran: users.length,
+      results: results.map((r) => (r.status === 'fulfilled' ? r.value : { error: String(r.reason && r.reason.message || r.reason) })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Backfill a daily card for a past date (same auth as the cron).
+// GET /api/cron/backfill?email=...&date=YYYY-MM-DD
+app.get('/api/cron/backfill', async (req, res) => {
+  if (process.env.CRON_SECRET) {
+    if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+      return res.status(401).json({ error: 'bad cron auth' });
+    }
+  } else if (!demoMode()) {
+    return res.status(401).json({ error: 'CRON_SECRET not configured' });
+  }
+  try {
+    const email = String(req.query.email || '').toLowerCase();
+    const date = String(req.query.date || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    const user = await getUser(email);
+    if (!user) return res.status(404).json({ error: 'no such user' });
+    const tz = user.tz || null;
+    const todayKey = nowInTz(tz).key;
+    if (date >= todayKey) return res.status(400).json({ error: 'backfill is for past dates — load the app for today\'s card' });
+    const floor = new Date(todayKey + 'T12:00:00'); floor.setDate(floor.getDate() - 13);
+    if (date < floor.toISOString().slice(0, 10)) return res.status(400).json({ error: 'older than the 14-day card shelf' });
+
+    const fakeReq = { userEmail: email, headers: { 'x-tz': tz || '' }, query: {}, protocol: 'https' };
+    const data = await loadDashboardData(fakeReq);
+    if (!hasData(data)) return res.status(400).json({ error: 'no readable data for this user (sources: ' + (data.source.errors.join('; ') || 'empty') + ')' });
+    const card = await getCoach(email, { ...data, widgetState: user.widgetState || null, tz, forDate: date });
+    res.json({ ok: true, date: card.date, headline: card.headline, todos: card.todos.map((t) => t.text), available: card.available });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ---------- custom widgets (user-requested, approval-gated) ----------
 
