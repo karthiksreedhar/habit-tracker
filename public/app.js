@@ -596,9 +596,11 @@ function coachNavHtml(kind, available, current, latest) {
   if (av.length < 2 || idx === -1) return '';
   const prev = idx > 0 ? av[idx - 1] : null;
   const next = idx < av.length - 1 ? av[idx + 1] : null;
+  const fmt = (k) => (kind === 'coach' ? fmtDate(k) : k);
   return `<span class="coach-nav">
-    <button ${prev ? '' : 'disabled'} onclick="${kind}Nav('${prev || ''}')" title="Earlier">‹</button>
-    <button ${next ? '' : 'disabled'} onclick="${kind}Nav('${next || ''}')" title="Later">›</button>
+    <button ${prev ? '' : 'disabled'} onclick="${kind}Nav('${prev || ''}')" title="${prev ? `Back to ${fmt(prev)} — you can still check things off` : 'This is the oldest saved card'}">‹</button>
+    <span class="coach-nav-pos">${idx + 1}/${av.length}</span>
+    <button ${next ? '' : 'disabled'} onclick="${kind}Nav('${next || ''}')" title="${next ? `Forward to ${fmt(next)}` : 'This is the latest'}">›</button>
   </span>`;
 }
 

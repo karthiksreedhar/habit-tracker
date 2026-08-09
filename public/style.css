@@ -744,14 +744,18 @@ tr:last-child td { border-bottom: none; }
 .danger-zone button:hover { background: var(--critical); color: #fff; border-color: transparent; }
 
 /* ---------- coach history nav ---------- */
-.coach-nav { display: inline-flex; gap: 0; margin-left: 8px; vertical-align: 1px; }
+.coach-nav {
+  display: inline-flex; align-items: center; gap: 1px; margin-left: 10px; vertical-align: 1px;
+  background: var(--page); border: 1px solid var(--grid); border-radius: 999px; padding: 1px 4px;
+}
 .coach-nav button {
   border: none; background: none; box-shadow: none;
-  padding: 0 5px; font-size: 15px; line-height: 1;
-  color: var(--muted); opacity: 0.4; cursor: pointer;
+  padding: 0 6px; font-size: 15px; line-height: 1.3;
+  color: var(--ink-2); opacity: 0.8; cursor: pointer; font-weight: 700;
 }
-.coach-nav button:hover:not(:disabled) { opacity: 1; color: var(--green-dark); transform: none; box-shadow: none; background: none; }
-.coach-nav button:disabled { opacity: 0.12; cursor: default; }
+.coach-nav button:hover:not(:disabled) { opacity: 1; color: var(--green-dark); transform: scale(1.2); box-shadow: none; background: none; }
+.coach-nav button:disabled { opacity: 0.18; cursor: default; }
+.coach-nav-pos { font-size: 10px; color: var(--muted); font-weight: 600; letter-spacing: 0.03em; text-transform: none; }
 
 /* ---------- activity leaderboard timeframe toggle ---------- */
 .win-toggle { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
