@@ -788,3 +788,20 @@ tr:last-child td { border-bottom: none; }
   background: var(--surface); color: var(--ink); cursor: pointer;
 }
 #report-saved:focus { outline: none; border-color: var(--green); }
+
+/* ---------- custom widgets ---------- */
+.menu-divider {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--green-dark); margin: 12px 0 6px; padding-top: 10px; border-top: 1px solid var(--grid);
+}
+#cw-section textarea {
+  width: 100%; font: inherit; font-size: 13px; padding: 9px 12px; resize: vertical;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--ink);
+}
+#cw-section textarea:focus { outline: none; border-color: var(--green); }
+.cw-item { border: 1px solid var(--grid); border-radius: 14px; padding: 10px 12px; margin-bottom: 10px; background: var(--page); }
+.cw-item-head { display: flex; align-items: center; gap: 8px; }
+.cw-item-head .note { margin-left: auto; }
+.cw-item-head .icon-btn { box-shadow: none; }
+.cw-frame { width: 100%; border: none; border-radius: 12px; background: #fff; height: 160px; display: block; }
+.cw-preview { border: 1px solid var(--grid); }

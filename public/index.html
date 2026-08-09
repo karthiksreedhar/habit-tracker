@@ -267,6 +267,17 @@
   </div>
   <p class="note" id="mode-note"></p>
   <div id="widget-menu" class="widget-menu"></div>
+
+  <div class="settings-section" id="cw-section">
+    <h3>✨ Request a widget</h3>
+    <p class="note">Describe a widget you wish existed and Claude builds it from your data. It runs sandboxed — no internet access, and your data never leaves the page.</p>
+    <div id="cw-list"></div>
+    <textarea id="cw-prompt" rows="2" maxlength="500" placeholder="e.g. A big number with my longest current streak and which habit it is"></textarea>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+      <button class="primary" id="cw-send" onclick="cwSend()">Build it</button>
+      <span id="cw-status" class="note"></span>
+    </div>
+  </div>
 </aside>
 
 <div id="tooltip"></div>

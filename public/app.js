@@ -62,6 +62,8 @@ async function boot() {
   if (data.error) { $('errors').textContent = 'Failed to build dashboard: ' + data.error; return; }
 
   window.APP_DATA = data; // parsed sources, reused for tag suggestions etc.
+  CUSTOM_WIDGETS = data.customWidgets || [];
+  renderCwList();
   NEEDS_SETUP = !!data.needsSetup;
   const loggedDays = Math.max(data.habits.days.length, data.journal.length);
   NEEDS_DATA = loggedDays === 0;
@@ -194,6 +196,7 @@ function visibleWidgets() {
   if (widgetMode() === 'suggested') {
     const base = suggestionSet();
     if (!base) return null;
+    for (const id of cwIds()) base.add(id); // approved custom widgets default on
     const overrides = suggestedOverrides();
     for (const [id, on] of Object.entries(overrides)) {
       if (on) base.add(id); else base.delete(id);
@@ -201,7 +204,7 @@ function visibleWidgets() {
     return base;
   }
   const prefs = widgetPrefs();
-  return new Set(WIDGETS.map(([id]) => id).filter((id) => prefs[id] !== false));
+  return new Set([...WIDGETS.map(([id]) => id), ...cwIds()].filter((id) => prefs[id] !== false));
 }
 
 function applyWidgets() {
@@ -231,6 +234,14 @@ function renderWidgetMenu() {
     const badge = mode === 'suggested' && sugg && sugg.has(id) ? '<span class="sugg-badge">✨ today</span>' : '';
     return `<label><input type="checkbox" data-w="${id}" ${checked ? 'checked' : ''}> ${esc(label)}${badge}</label>`;
   }).join('');
+  const customs = cwApproved();
+  if (customs.length) {
+    menu.innerHTML += `<div class="menu-divider">✨ Your widgets</div>` + customs.map((w) => {
+      const id = 'cw_' + w.id;
+      const on = !vis || vis.has(id);
+      return `<label class="widget-row"><input type="checkbox" data-w="${id}" ${on ? 'checked' : ''}> <span>${esc(w.title)}</span></label>`;
+    }).join('');
+  }
   menu.querySelectorAll('input').forEach((cb) => {
     cb.onchange = () => {
       const id = cb.getAttribute('data-w');
@@ -250,6 +261,161 @@ function renderWidgetMenu() {
       syncWidgetState();
     };
   });
+}
+
+// ---------- custom widgets (user-requested, sandboxed) ----------
+// Generated HTML only ever runs inside <iframe sandbox="allow-scripts"> with
+// CSP default-src 'none' — no cookies, no network, no parent DOM. The frame
+// receives a JSON snapshot of the user's own parsed data and nothing else.
+
+let CUSTOM_WIDGETS = [];
+const cwApproved = () => CUSTOM_WIDGETS.filter((w) => w.status === 'approved');
+const cwIds = () => cwApproved().map((w) => 'cw_' + w.id);
+
+function cwSnapshot() {
+  const d = window.APP_DATA;
+  if (!d) return {};
+  const i = d.insights;
+  return {
+    habits: {
+      habitNames: d.habits.habitNames,
+      days: d.habits.days.slice(-60).map((x) => ({
+        date: x.date, values: x.values, done: x.done, total: x.total,
+        completion: x.completion, note: x.note || null,
+      })),
+    },
+    journal: d.journal.slice(-60).map((j) => ({
+      date: j.date, score: j.score, city: j.city, bedtimeMin: j.bedtimeMin,
+      activities: j.activities.map((a) => ({ time: a.time, title: a.title, location: a.location, rating: a.rating, people: a.people })),
+    })),
+    insights: {
+      kpis: i.kpis, perHabit: i.perHabit, people: i.people, cities: i.cities,
+      sleep: i.sleep, plant: { daily: i.plant.daily, total: i.plant.total },
+      weekdays: i.weekdays, activities: i.activities,
+    },
+  };
+}
+
+function cwSrcdoc(w) {
+  const data = JSON.stringify(cwSnapshot()).replace(/</g, '\\u003c');
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+<style>body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;color:#202124;background:transparent}</style>
+</head><body>
+<script id="cw-data" type="application/json">${data}<\/script>
+${w.html}
+<script>
+  const _post = () => parent.postMessage({ t: 'cwh', id: '${w.id}', h: document.documentElement.scrollHeight }, '*');
+  new ResizeObserver(_post).observe(document.body);
+  addEventListener('load', _post);
+<\/script>
+</body></html>`;
+}
+
+// Auto-size frames from their sandboxed content (validated by source window)
+window.addEventListener('message', (e) => {
+  if (!e.data || e.data.t !== 'cwh') return;
+  const f = document.querySelector(`iframe[data-cw="${CSS.escape(String(e.data.id))}"]`);
+  if (!f || e.source !== f.contentWindow) return;
+  f.style.height = Math.max(110, Math.min(640, Number(e.data.h) || 0)) + 'px';
+});
+
+// Cards on the dashboard for every approved widget
+function renderCustomWidgetCards() {
+  const grid = document.querySelector('.grid');
+  if (!grid) return;
+  // remove cards whose widget is gone
+  grid.querySelectorAll('[data-widget^="cw_"]').forEach((el) => {
+    if (!cwIds().includes(el.getAttribute('data-widget'))) el.remove();
+  });
+  for (const w of cwApproved()) {
+    const id = 'cw_' + w.id;
+    let card = grid.querySelector(`[data-widget="${id}"]`);
+    if (!card) {
+      card = document.createElement('div');
+      card.className = `card span${w.span || 6}`;
+      card.setAttribute('data-widget', id);
+      card.innerHTML = `<h2>✨ ${esc(w.title)}</h2><p class="sub">${esc(w.description || '')}</p>
+        <iframe class="cw-frame" sandbox="allow-scripts" data-cw="${esc(w.id)}"></iframe>`;
+      grid.appendChild(card);
+      card.querySelector('iframe').srcdoc = cwSrcdoc(w);
+    }
+  }
+  ensureWidgetControls();
+  applyWidgets();
+}
+
+// Drawer: list + chat
+function renderCwList() {
+  const el = $('cw-list');
+  if (!el) return;
+  el.innerHTML = CUSTOM_WIDGETS.map((w) => `
+    <div class="cw-item">
+      <div class="cw-item-head">
+        <b>${esc(w.title)}</b>
+        <span class="note">${w.status === 'pending' ? 'awaiting your approval' : 'live'}</span>
+        <button class="icon-btn" title="Delete" onclick="cwDelete('${esc(w.id)}')">🗑</button>
+      </div>
+      ${w.status === 'pending' ? `
+        <p class="note" style="margin:2px 0 6px">${esc(w.description || '')}</p>
+        <iframe class="cw-frame cw-preview" sandbox="allow-scripts" data-cw="${esc(w.id)}"></iframe>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="primary" onclick="cwApprove('${esc(w.id)}')">✓ Add to my dashboard</button>
+          <button onclick="cwDelete('${esc(w.id)}')">Discard</button>
+        </div>` : ''}
+    </div>`).join('');
+  // fill previews after insertion (srcdoc via property, not attribute)
+  for (const w of CUSTOM_WIDGETS.filter((x) => x.status === 'pending')) {
+    const f = el.querySelector(`iframe[data-cw="${CSS.escape(w.id)}"]`);
+    if (f) f.srcdoc = cwSrcdoc(w);
+  }
+}
+
+async function cwSend() {
+  const input = $('cw-prompt');
+  const prompt = input.value.trim();
+  if (!prompt) return;
+  const btn = $('cw-send');
+  btn.disabled = true;
+  input.disabled = true;
+  $('cw-status').textContent = 'Building your widget — 30-60s…';
+  try {
+    const r = await (await fetch('/api/widgets/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    })).json();
+    if (r.error) throw new Error(r.error);
+    CUSTOM_WIDGETS.push(r.widget);
+    input.value = '';
+    $('cw-status').textContent = 'Done — preview below, approve to add it.';
+    renderCwList();
+  } catch (e) {
+    $('cw-status').textContent = '⚠️ ' + e.message;
+  } finally {
+    btn.disabled = false;
+    input.disabled = false;
+  }
+}
+
+async function cwApprove(id) {
+  const r = await (await fetch('/api/widgets/custom/' + encodeURIComponent(id) + '/approve', { method: 'POST' })).json();
+  if (r.error) { $('cw-status').textContent = '⚠️ ' + r.error; return; }
+  const w = CUSTOM_WIDGETS.find((x) => x.id === id);
+  if (w) w.status = 'approved';
+  renderCwList();
+  renderCustomWidgetCards();
+  renderWidgetMenu();
+  $('cw-status').textContent = 'Added — it\'s on your dashboard and in the list above.';
+}
+
+async function cwDelete(id) {
+  await fetch('/api/widgets/custom/' + encodeURIComponent(id), { method: 'DELETE' });
+  CUSTOM_WIDGETS = CUSTOM_WIDGETS.filter((x) => x.id !== id);
+  const card = document.querySelector(`[data-widget="cw_${CSS.escape(id)}"]`);
+  if (card) card.remove();
+  renderCwList();
+  renderWidgetMenu();
 }
 
 // ---------- drag & drop reordering ----------
@@ -314,9 +480,15 @@ function applyWidgetOrder() {
   const grid = document.querySelector('.grid');
   const cards = new Map([...grid.querySelectorAll(':scope > [data-widget]')]
     .map((el) => [el.getAttribute('data-widget'), el]));
+  // Saved order first; widgets added since the order was saved (e.g. a brand
+  // new widget) go to the END in their natural order — never the top.
+  const listed = new Set(order.filter((id) => cards.has(id)));
   for (const id of order) {
     const el = cards.get(id);
     if (el) grid.appendChild(el);
+  }
+  for (const [id, el] of cards) {
+    if (!listed.has(id)) grid.appendChild(el);
   }
 }
 
@@ -1666,6 +1838,7 @@ function render(data) {
   ACT_WINDOWS = insights.recent.activityWindows || null;
   PLANT_WINDOWS = insights.recent.plantWindows || null;
   renderActivities(insights.recent.activities);
+  renderCustomWidgetCards();
   ensureWidgetControls();
 }
 

@@ -34,6 +34,7 @@ const { getUser, updateUser, deleteUserData } = require('./lib/db');
 const { nowInTz, userTz } = require('./lib/tz');
 const { getReport, listReports } = require('./lib/report');
 const { weatherSeries } = require('./lib/weather');
+const { generateWidget, approveWidget, deleteWidget } = require('./lib/custom-widgets');
 const { listGoals, addGoal, removeGoal, assessGoals, assessSingleGoal, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
 const social = require('./lib/social');
 
@@ -524,9 +525,11 @@ async function loadDashboardData(req) {
   const notesPrompt = !demo && notesDetected.length > 0 && notesConsent === null;
 
   const insights = buildInsights(habits, journal);
+  let customWidgets = [];
+  try { customWidgets = ((await getUser(email)) || {}).customWidgets || []; } catch {}
   return {
     source, needsSetup, needsConfirm, missing,
-    notesDetected, notesConsent, notesPrompt,
+    notesDetected, notesConsent, notesPrompt, customWidgets,
     fetchedAt: today.toISOString(), habits, journal, insights,
   };
 }
@@ -760,6 +763,33 @@ app.delete('/api/goals/:id', async (req, res) => {
 });
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// ---------- custom widgets (user-requested, approval-gated) ----------
+
+app.post('/api/widgets/generate', async (req, res) => {
+  try {
+    res.json({ ok: true, widget: await generateWidget(req.userEmail, req.body.prompt) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/widgets/custom/:id/approve', async (req, res) => {
+  try {
+    res.json({ ok: true, widget: await approveWidget(req.userEmail, req.params.id) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/widgets/custom/:id', async (req, res) => {
+  try {
+    await deleteWidget(req.userEmail, req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
 
 // Temperature vs day score, from the cities in the journal
 app.get('/api/weather', async (req, res) => {
