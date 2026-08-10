@@ -250,7 +250,7 @@ tr:last-child td { border-bottom: none; }
 .rowbar .track { flex: 1; height: 14px; background: none; position: relative; }
 .rowbar .fill { position: absolute; top: 2px; bottom: 2px; left: 0; border-radius: 0 6px 6px 0; }
 
-.pill { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); }
+.pill { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap; }
 .pill.hot { border-color: var(--yellow); color: #b06000; background: #fef7e0; }
 
 .win-item, .focus-item { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--grid); }
