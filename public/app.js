@@ -2040,7 +2040,7 @@ function renderHabitBars(perHabit) {
       <span style="width:190px;font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(h.name)}</span>
       <span class="track"><span class="fill" style="width:${Math.max(pct, 1)}%;background:var(--green)"></span></span>
       <span style="width:38px;text-align:right;font-variant-numeric:tabular-nums;font-size:12px">${pct}%</span>
-      <span style="width:56px">${streak}</span></div>`;
+      <span style="min-width:56px;flex:none">${streak}</span></div>`;
   }).join('');
 }
 
