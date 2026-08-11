@@ -2074,7 +2074,56 @@ function renderImpact(impact) {
 }
 
 // ---------- people ----------
+// ---------- sortable table columns (people, activities, ...) ----------
+// Click a header to sort by that column, click again to flip. Choice is
+// remembered per widget.
+
+function sortStateFor(widget, defKey, defDir = 'desc') {
+  try {
+    const s = JSON.parse(localStorage.getItem('sort:' + widget));
+    if (s && s.key) return s;
+  } catch {}
+  return { key: defKey, dir: defDir };
+}
+
+const SORT_RERENDER = {
+  people: () => LAST_PEOPLE && renderPeople(LAST_PEOPLE),
+  activities: () => renderActivities(),
+};
+
+function setSortFor(widget, key) {
+  const cur = sortStateFor(widget, '');
+  const next = cur.key === key
+    ? { key, dir: cur.dir === 'desc' ? 'asc' : 'desc' }
+    : { key, dir: (key === 'name' || key === 'title') ? 'asc' : 'desc' }; // text starts A→Z, numbers high→low
+  localStorage.setItem('sort:' + widget, JSON.stringify(next));
+  (SORT_RERENDER[widget] || (() => {}))();
+}
+
+// Comparator for the chosen column; nulls always sink to the bottom.
+function sortCmp(st) {
+  const dir = st.dir === 'asc' ? 1 : -1;
+  return (a, b) => {
+    const va = a[st.key], vb = b[st.key];
+    const aNull = va === null || va === undefined, bNull = vb === null || vb === undefined;
+    if (aNull && bNull) return 0;
+    if (aNull) return 1;
+    if (bNull) return -1;
+    if (typeof va === 'string' || typeof vb === 'string') return dir * String(va).localeCompare(String(vb));
+    return dir * (va - vb);
+  };
+}
+
+function sortableTh(widget, key, label, st, numeric = true) {
+  const on = st.key === key;
+  return `<th class="${numeric ? 'num ' : ''}sortable ${on ? 'on' : ''}" title="Sort by ${esc(label)}"
+    onclick="setSortFor('${widget}','${key}')">${esc(label)}${on ? `<span class="s-ind">${st.dir === 'desc' ? '▼' : '▲'}</span>` : ''}</th>`;
+}
+
+let LAST_PEOPLE = null;
+
 function renderPeople(people) {
+  LAST_PEOPLE = people;
   // Ranked by how those hangs rate — but the people you actually see come
   // first, so a single lucky hangout can't crowd out a regular. One-offs fill
   // any leftover rows and are flagged as thin evidence.
@@ -2095,7 +2144,14 @@ function renderPeople(people) {
     $('people').innerHTML = `<p class="note">No people detected yet.</p>`;
     return;
   }
-  $('people').innerHTML = `<table><tr><th>Person</th><th></th><th class="num">Avg hang</th><th class="num">Avg day</th><th class="num">Hangs</th></tr>` +
+  // Selection above decides WHO shows; the user's column choice orders them
+  const st = sortStateFor('people', 'avgActRating');
+  top.sort(sortCmp(st));
+  $('people').innerHTML = `<table><tr>
+      ${sortableTh('people', 'name', 'Person', st, false)}<th></th>
+      ${sortableTh('people', 'avgActRating', 'Avg hang', st)}
+      ${sortableTh('people', 'avgDayScore', 'Avg day', st)}
+      ${sortableTh('people', 'acts', 'Hangs', st)}</tr>` +
     top.map((p) => {
       const w = p.avgActRating !== null ? Math.max(p.avgActRating * 10, 2) : 0;
       return `<tr class="${p.acts < 2 ? 'low-n' : ''}" data-tt="${tt(p.name, [`${p.acts} activities across ${p.days} day(s)`, p.avgDayScore !== null ? `Avg day score together: <b>${p.avgDayScore}</b>` : '', p.avgActRating !== null ? `Avg rating of those hangs: <b>${p.avgActRating}</b>` : '', p.acts < 2 ? '<i>Only one hangout — treat as noise</i>' : ''])}">
@@ -2364,8 +2420,12 @@ function renderActivities(actsLegacy) {
 
   let html = '';
   if (recurring.length) {
+    const st = sortStateFor('activities', 'avgRating');
+    recurring.sort(sortCmp(st));
     html += `<table>
-      <tr><th>Activity</th><th></th><th class="num">Avg rating</th><th class="num">Times</th></tr>` +
+      <tr>${sortableTh('activities', 'title', 'Activity', st, false)}<th></th>
+      ${sortableTh('activities', 'avgRating', 'Avg rating', st)}
+      ${sortableTh('activities', 'n', 'Times', st)}</tr>` +
       recurring.map((a) => `<tr>
         <td>${esc(a.title)}</td>
         <td style="width:45%"><span class="rowbar"><span class="track"><span class="fill" style="width:${a.avgRating * 10}%;background:var(--green)"></span></span></span></td>

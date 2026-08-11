@@ -809,3 +809,9 @@ tr:last-child td { border-bottom: none; }
 .cw-item-head .icon-btn { box-shadow: none; }
 .cw-frame { width: 100%; border: none; border-radius: 12px; background: #fff; height: 160px; display: block; }
 .cw-preview { border: 1px solid var(--grid); }
+
+/* ---------- sortable table headers ---------- */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--ink); }
+th.sortable.on { color: var(--green-dark); }
+.s-ind { font-size: 8px; margin-left: 3px; vertical-align: 1px; }
