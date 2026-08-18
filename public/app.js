@@ -1829,6 +1829,7 @@ function render(data) {
   renderHeatmap(habits);
   renderHabitBars(insights.perHabit);
   renderImpact(insights.habitImpact);
+  PEOPLE_WINDOWS = insights.recent.peopleWindows || null;
   renderPeople(insights.people);
   renderPlaces(insights.cities, insights.locationSplit);
   renderSleep(insights.recent.sleep, insights.kpis);
@@ -2087,7 +2088,7 @@ function sortStateFor(widget, defKey, defDir = 'desc') {
 }
 
 const SORT_RERENDER = {
-  people: () => LAST_PEOPLE && renderPeople(LAST_PEOPLE),
+  people: () => renderPeople(),
   activities: () => renderActivities(),
 };
 
@@ -2121,9 +2122,27 @@ function sortableTh(widget, key, label, st, numeric = true) {
 }
 
 let LAST_PEOPLE = null;
+let PEOPLE_WINDOWS = null;
 
-function renderPeople(people) {
-  LAST_PEOPLE = people;
+function setPeopleWindow(w) {
+  localStorage.setItem('peopleWindow', w);
+  renderPeople();
+}
+
+function renderPeople(peopleLegacy) {
+  if (peopleLegacy) LAST_PEOPLE = peopleLegacy;
+  const choice = localStorage.getItem('peopleWindow') || 'month';
+  const win = PEOPLE_WINDOWS ? (PEOPLE_WINDOWS[choice] || PEOPLE_WINDOWS.month) : { list: LAST_PEOPLE || [] };
+  const people = win.list || [];
+
+  const sub = document.querySelector('[data-widget="people"] .sub');
+  if (sub && PEOPLE_WINDOWS) {
+    const names = { week: 'Week', month: 'Month', all: 'All time' };
+    const range = win.start && win.end ? ` · ${fmtDate(win.start)}–${fmtDate(win.end)}` : '';
+    sub.innerHTML = `Who you hang with, and how those hangs rate${esc(range)}
+      <span class="win-toggle">${['week', 'month', 'all'].map((k) =>
+        `<button class="${k === choice ? 'on' : ''}" onclick="setPeopleWindow('${k}')">${names[k]}</button>`).join('')}</span>`;
+  }
   // Ranked by how those hangs rate — but the people you actually see come
   // first, so a single lucky hangout can't crowd out a regular. One-offs fill
   // any leftover rows and are flagged as thin evidence.
@@ -2397,8 +2416,8 @@ function setActWindow(w) {
 }
 
 function renderActivities(actsLegacy) {
-  const choice = localStorage.getItem('actWindow') || 'week';
-  const win = ACT_WINDOWS ? (ACT_WINDOWS[choice] || ACT_WINDOWS.week) : { list: actsLegacy || [] };
+  const choice = localStorage.getItem('actWindow') || 'month';
+  const win = ACT_WINDOWS ? (ACT_WINDOWS[choice] || ACT_WINDOWS.month) : { list: actsLegacy || [] };
   const acts = win.list || [];
 
   // subtitle: label + subtle timeframe toggle
@@ -2411,34 +2430,27 @@ function renderActivities(actsLegacy) {
         `<button class="${k === choice ? 'on' : ''}" onclick="setActWindow('${k}')">${names[k]}</button>`).join('')}</span>`;
   }
 
-  if (!acts.length) return emptyState('activities', `No rated activities ${choice === 'all' ? 'in the journal yet' : `in the past ${choice === 'week' ? 'week' : 'month'}`}.`, '⭐');
-  // All time: strictly repeated activities (2+), top 10 — otherwise the list
-  // is one-offs all the way down.
-  const cap = choice === 'all' ? 10 : 12;
-  const recurring = acts.filter((a) => a.n >= 2).sort((a, b) => b.avgRating - a.avgRating || b.n - a.n).slice(0, cap);
-  const oneOffs = choice === 'all' ? [] : acts.filter((a) => a.n === 1).sort((a, b) => b.avgRating - a.avgRating);
+  if (!acts.length) return emptyState('activities', `No activities logged ${choice === 'all' ? 'yet' : `in the past ${choice === 'week' ? 'week' : 'month'}`}.`, '⭐');
 
-  let html = '';
-  if (recurring.length) {
-    const st = sortStateFor('activities', 'avgRating');
-    recurring.sort(sortCmp(st));
-    html += `<table>
+  // Same shape as the people widget: core = done 5+ times; fill to 10 with the
+  // most-done others (one-offs included when the list is thin). Hard cap 10.
+  const core = acts.filter((a) => a.n >= 5);
+  let rows = core.length >= 10
+    ? [...core]
+    : [...core, ...acts.filter((a) => a.n < 5).sort((a, b) => b.n - a.n || (b.avgRating ?? -1) - (a.avgRating ?? -1))];
+  rows = rows.slice(0, 10);
+
+  const st = sortStateFor('activities', 'avgRating');
+  rows.sort(sortCmp(st));
+  $('activities').innerHTML = `<table>
       <tr>${sortableTh('activities', 'title', 'Activity', st, false)}<th></th>
       ${sortableTh('activities', 'avgRating', 'Avg rating', st)}
       ${sortableTh('activities', 'n', 'Times', st)}</tr>` +
-      recurring.map((a) => `<tr>
+    rows.map((a) => `<tr class="${a.n < 2 ? 'low-n' : ''}">
         <td>${esc(a.title)}</td>
-        <td style="width:45%"><span class="rowbar"><span class="track"><span class="fill" style="width:${a.avgRating * 10}%;background:var(--green)"></span></span></span></td>
-        <td class="num"><b>${a.avgRating}</b></td><td class="num">${a.n}</td></tr>`).join('') +
-      `</table>`;
-  } else {
-    html += `<p class="note">Nothing repeated yet — keep logging and the pattern will show up here.</p>`;
-  }
-  if (oneOffs.length) {
-    const best = oneOffs.slice(0, 3).map((a) => `${esc(a.title)} (${a.avgRating})`).join(' · ');
-    html += `<p class="note" style="margin-top:10px"><b>Best one-offs:</b> ${best}${oneOffs.length > 3 ? ` — and ${oneOffs.length - 3} more done once` : ''}</p>`;
-  }
-  $('activities').innerHTML = html;
+        <td style="width:45%"><span class="rowbar"><span class="track"><span class="fill" style="width:${(a.avgRating ?? 0) * 10}%;background:var(--green)"></span></span></span></td>
+        <td class="num"><b>${a.avgRating ?? '—'}</b></td><td class="num">${a.n}</td></tr>`).join('') +
+    `</table>`;
 }
 
 boot();
