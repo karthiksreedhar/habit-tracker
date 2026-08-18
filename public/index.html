@@ -31,6 +31,7 @@
       <button id="data-btn" title="Data sources & read check">🔗 Data</button>
       <button id="settings-btn" title="Widgets">⚙︎ Widgets</button>
       <button id="signout-btn" style="display:none" onclick="logout()">Sign out</button>
+      <button id="usage-btn" class="icon-circle" style="display:none" title="Usage (only you can see this)" onclick="showView('usage')">📈</button>
       <button id="info-btn" class="icon-circle" title="What does each button do?" onclick="toggleInfoOverlay()">ℹ️</button>
     </div>
   </header>
@@ -58,6 +59,16 @@
       <button class="primary" type="submit">Add goal</button>
     </form>
     <div id="goals-list"></div>
+  </section>
+
+  <!-- ===== Usage view (admin only) ===== -->
+  <section id="view-usage" class="view">
+    <div class="view-head">
+      <h2>📈 Usage</h2>
+      <button class="icon-btn" onclick="showView('dashboard')" title="Back to dashboard">✕</button>
+    </div>
+    <p class="note" style="margin-bottom:14px">Only you can see this. Events are kept 90 days; the table below covers the last 30.</p>
+    <div id="usage-body" class="card" style="overflow-x:auto"><div class="coach-loading">Loading<span class="dots"><i>.</i><i>.</i><i>.</i></span></div></div>
   </section>
 
   <!-- ===== Social view ===== -->

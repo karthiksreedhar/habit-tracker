@@ -30,12 +30,12 @@ const {
   getCachedDaily, getCachedWeekly, isoWeekKey,
   DEMO_EMAIL,
 } = require('./lib/coach');
-const { getUser, updateUser, deleteUserData, getDb, loadCoachCache } = require('./lib/db');
+const { getUser, updateUser, deleteUserData, getDb, loadCoachCache, logEvent, recentEvents } = require('./lib/db');
 const { nowInTz, userTz } = require('./lib/tz');
 const { getReport, listReports } = require('./lib/report');
 const { weatherSeries } = require('./lib/weather');
 const { generateWidget, approveWidget, deleteWidget } = require('./lib/custom-widgets');
-const { listGoals, addGoal, removeGoal, assessGoals, assessSingleGoal, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
+const { listGoals, addGoal, removeGoal, completeGoal, assessGoals, assessSingleGoal, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
 const social = require('./lib/social');
 
 const PORT = process.env.PORT || 5757;
@@ -48,6 +48,12 @@ const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets.readonly',
   'https://www.googleapis.com/auth/documents.readonly',
 ];
+
+// Emails allowed to see the usage dashboard (comma-separated env var);
+// local demo mode is always allowed so it can be developed against.
+const ADMIN_EMAILS = String(process.env.ADMIN_EMAILS || '')
+  .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+const isAdmin = (email) => demoMode() || ADMIN_EMAILS.includes(String(email || '').toLowerCase());
 
 const app = express();
 app.use(express.json());
@@ -162,6 +168,7 @@ app.get('/oauth2callback', async (req, res) => {
     await updateUser(email, { tokens: merged });
 
     setSessionCookie(req, res, email);
+    logEvent(email, 'login');
     res.redirect('/');
   } catch (e) {
     res.status(500).send('Sign-in failed: ' + e.message);
@@ -197,6 +204,7 @@ app.get('/api/status', async (req, res) => {
     loggedIn: !!email,
     demo,
     email: email || (demo ? 'local demo' : null),
+    isAdmin: isAdmin(email || (demo ? DEMO_EMAIL : '')),
     sheetUrl: user ? user.sheetUrl || null : null,
     docUrl: user ? user.docUrl || null : null,
     widgetState: user ? user.widgetState || null : null,
@@ -208,6 +216,10 @@ app.get('/api/status', async (req, res) => {
 app.post('/api/widgets', async (req, res) => {
   try {
     const s = req.body || {};
+    logEvent(req.userEmail, 'widget_state', {
+      mode: (req.body || {}).mode || 'suggested',
+      visible: Array.isArray((req.body || {}).lastVisible) ? (req.body || {}).lastVisible.length : null,
+    });
     await updateUser(req.userEmail, {
       widgetState: {
         mode: s.mode || 'suggested',
@@ -560,6 +572,7 @@ app.get('/api/data', async (req, res) => {
     const data = await loadDashboardData(req);
     const tz = userTz(req);
     if (tz && req.userEmail !== DEMO_EMAIL) updateUser(req.userEmail, { tz }).catch(() => {});
+    logEvent(req.userEmail, 'data_load');
     // If both sources fetched cleanly and parsed real days, the read is
     // self-evidently fine — confirm silently instead of nagging forever.
     if (data.needsConfirm && !data.source.errors.length
@@ -647,6 +660,7 @@ app.get('/api/coach', async (req, res) => {
 app.post('/api/coach/check', async (req, res) => {
   try {
     const { date, index, checked } = req.body;
+    logEvent(req.userEmail, 'coach_check', { kind: 'daily', checked: !!checked });
     res.json({ ok: true, checked: await setChecked(req.userEmail, date, Number(index), !!checked) });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -657,6 +671,7 @@ app.post('/api/coach/fail', async (req, res) => {
   try {
     const { date, index } = req.body;
     const data = await loadDashboardData(req);
+    logEvent(req.userEmail, 'coach_swap', { kind: 'daily' });
     res.json(await replaceTodo(req.userEmail, { date, index: Number(index), tz: userTz(req), ...data }));
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -690,6 +705,7 @@ app.get('/api/coach/weekly', async (req, res) => {
 app.post('/api/coach/weekly/check', async (req, res) => {
   try {
     const { week, index, checked } = req.body;
+    logEvent(req.userEmail, 'coach_check', { kind: 'weekly', checked: !!checked });
     res.json({ ok: true, checked: await setWeeklyChecked(req.userEmail, week, Number(index), !!checked) });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -700,6 +716,7 @@ app.post('/api/coach/weekly/fail', async (req, res) => {
   try {
     const { week, index } = req.body;
     const data = await loadDashboardData(req);
+    logEvent(req.userEmail, 'coach_swap', { kind: 'weekly' });
     res.json(await replaceWeeklyGoal(req.userEmail, { week, index: Number(index), tz: userTz(req), ...data }));
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -727,6 +744,7 @@ app.get('/api/goals', async (req, res) => {
 
 app.post('/api/goals', async (req, res) => {
   try {
+    logEvent(req.userEmail, 'goal_create');
     res.json({ ok: true, goal: await addGoal(req.userEmail, req.body.text) });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -735,8 +753,27 @@ app.post('/api/goals', async (req, res) => {
 
 // Tag changes re-measure ONLY the affected goal; the rest of the board keeps
 // its cached assessment.
+// Mark a goal complete / reopen it. Completing never re-thinks the board;
+// reopening re-measures just that goal so the rest stay put.
+app.post('/api/goals/:id/complete', async (req, res) => {
+  try {
+    const completed = !!req.body.completed;
+    logEvent(req.userEmail, completed ? 'goal_complete' : 'goal_reopen');
+    const goal = await completeGoal(req.userEmail, req.params.id, completed);
+    let assessment = null;
+    if (!completed) {
+      const data = await loadDashboardData(req);
+      assessment = await assessSingleGoal(req.userEmail, req.params.id, data);
+    }
+    res.json({ ok: true, goal, assessment });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 app.post('/api/goals/:id/link', async (req, res) => {
   try {
+    logEvent(req.userEmail, 'goal_tag');
     const goal = await linkActivity(req.userEmail, req.params.id, req.body.phrase);
     const data = await loadDashboardData(req);
     const assessment = await assessSingleGoal(req.userEmail, req.params.id, data);
@@ -766,6 +803,60 @@ app.delete('/api/goals/:id', async (req, res) => {
 });
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// ---------- owner usage analytics ----------
+// Visible only to ADMIN_EMAILS: how the app is actually being used, per user.
+app.get('/api/admin/usage', async (req, res) => {
+  try {
+    if (!isAdmin(req.userEmail)) return res.status(403).json({ error: 'Not allowed.' });
+    const days = Math.min(90, Math.max(7, Number(req.query.days) || 30));
+    const events = await recentEvents(days);
+    const by = new Map();
+    const row = (email) => {
+      if (!by.has(email)) {
+        by.set(email, {
+          email, lastSeen: null, activeDays: new Set(), logins: 0,
+          dailyChecks: 0, weeklyChecks: 0, swaps: 0,
+          goalsCreated: 0, goalsCompleted: 0, goalTags: 0,
+          widgetTweaks: 0, reports: 0, widgetRequests: 0,
+        });
+      }
+      return by.get(email);
+    };
+    for (const e of events) {
+      const r = row(e.email);
+      const ts = new Date(e.ts);
+      if (!r.lastSeen || ts > r.lastSeen) r.lastSeen = ts;
+      if (e.type === 'data_load') r.activeDays.add(ts.toISOString().slice(0, 10));
+      else if (e.type === 'login') r.logins++;
+      else if (e.type === 'coach_check' && e.meta && e.meta.checked) {
+        if (e.meta.kind === 'weekly') r.weeklyChecks++; else r.dailyChecks++;
+      } else if (e.type === 'coach_swap') r.swaps++;
+      else if (e.type === 'goal_create') r.goalsCreated++;
+      else if (e.type === 'goal_complete') r.goalsCompleted++;
+      else if (e.type === 'goal_tag') r.goalTags++;
+      else if (e.type === 'widget_state') r.widgetTweaks++;
+      else if (e.type === 'report_generate') r.reports++;
+      else if (e.type === 'widget_request') r.widgetRequests++;
+    }
+    // Snapshot facts from user docs (current goal counts, display names)
+    const db = await getDb();
+    const users = await db.collection('users')
+      .find({}, { projection: { email: 1, 'social.displayName': 1 } }).limit(200).toArray();
+    const names = new Map(users.map((u) => [u.email, (u.social && u.social.displayName) || null]));
+    const rows = [...by.values()]
+      .map((r) => ({
+        ...r,
+        displayName: names.get(r.email) || null,
+        activeDays: r.activeDays.size,
+        lastSeen: r.lastSeen ? r.lastSeen.toISOString() : null,
+      }))
+      .sort((a, b) => (b.lastSeen || '').localeCompare(a.lastSeen || ''));
+    res.json({ windowDays: days, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ---------- morning cron: pre-generate coach cards for every user ----------
 // Vercel Cron hits this daily (see vercel.json). Auth: Vercel sends
@@ -871,6 +962,7 @@ app.get('/api/cron/backfill', async (req, res) => {
 
 app.post('/api/widgets/generate', async (req, res) => {
   try {
+    logEvent(req.userEmail, 'widget_request');
     res.json({ ok: true, widget: await generateWidget(req.userEmail, req.body.prompt) });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -927,6 +1019,7 @@ app.get('/api/report', async (req, res) => {
     } catch {}
     let followThrough = '';
     try { followThrough = adherenceBlock(await getAdherence(req.userEmail)); } catch {}
+    if (req.query.generate === '1') logEvent(req.userEmail, 'report_generate');
     res.json(await getReport(req.userEmail, {
       tz: userTz(req),
       ...data,

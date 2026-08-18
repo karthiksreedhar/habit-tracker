@@ -815,3 +815,14 @@ th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
 th.sortable:hover { color: var(--ink); }
 th.sortable.on { color: var(--green-dark); }
 .s-ind { font-size: 8px; margin-left: 3px; vertical-align: 1px; }
+
+/* ---------- goal completion ---------- */
+.goal-actions { position: absolute; top: 14px; right: 14px; display: inline-flex; gap: 6px; }
+.goal-actions .goal-x { position: static; }
+.goal-x.done-btn { color: var(--green-dark); border-color: var(--seq-2); }
+.goal-x.done-btn:hover { background: var(--green); border-color: var(--green); color: #fff; }
+.goal-shelf { margin-top: 18px; border-top: 1px solid var(--grid); padding-top: 12px; }
+.goal-shelf h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 8px; }
+.shelf-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 13.5px; }
+.shelf-row .shelf-text { flex: 1; }
+.shelf-row .gtag { cursor: pointer; }

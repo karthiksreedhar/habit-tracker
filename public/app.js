@@ -825,6 +825,7 @@ function renderAuthArea() {
     ? `<span class="badge">${esc(STATUS.email || 'signed in')}</span>`
     : `<button class="primary" onclick="location.href='/auth/google'">Sign in with Google</button>`;
   if (STATUS.loggedIn) $('signout-btn').style.display = '';
+  if (STATUS.isAdmin) $('usage-btn').style.display = '';
 }
 
 // ---------- life report ----------
@@ -976,6 +977,9 @@ const GOAL_STATUS_LABEL = {
 
 function renderGoals(goals, assessment) {
   const el = $('goals-list');
+  const active = goals.filter((g) => !g.completedAt);
+  const done = goals.filter((g) => g.completedAt)
+    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
   if (!goals.length) {
     el.innerHTML = `<div class="empty-state"><span class="es-emoji">🎯</span>
       No goals yet. Add one above — say it however you'd say it out loud
@@ -983,9 +987,9 @@ function renderGoals(goals, assessment) {
     return;
   }
   const byId = new Map((assessment.goals || []).map((g) => [g.id, g]));
-  const stale = !assessment.goals || assessment.goals.length < goals.length;
+  const stale = active.some((g) => !byId.has(g.id) && !GOAL_THINKING.has(g.id));
 
-  el.innerHTML = `<div class="goal-cards">` + goals.map((g) => {
+  el.innerHTML = (active.length ? `<div class="goal-cards">` : `<div class="empty-state" style="padding:24px 16px"><span class="es-emoji">🏆</span>All goals completed — add the next one above.</div><div class="goal-cards">`) + active.map((g) => {
     const a = byId.get(g.id);
     let body;
     if (GOAL_THINKING.has(g.id)) {
@@ -1026,18 +1030,79 @@ function renderGoals(goals, assessment) {
       `<button class="gtag suggest" title="${esc(s.why || '')} — click to count it" onclick="linkGoalTag('${esc(g.id)}','${safe(s.phrase)}')">+ ${esc(s.phrase)}</button>`).join('');
     tags += `<button class="gtag add" title="Tag an activity or habit as counting toward this goal" onclick="showTagInput(this,'${esc(g.id)}')">+ tag</button></div>`;
     return `<div class="goal-card">
-      <button class="goal-x" title="Delete this goal" onclick="removeGoalById('${esc(g.id)}', '${safeText}')">🗑 Delete</button>
+      <span class="goal-actions">
+        <button class="goal-x done-btn" title="Mark this goal complete" onclick="completeGoalById('${esc(g.id)}')">✓ Done</button>
+        <button class="goal-x" title="Delete this goal" onclick="removeGoalById('${esc(g.id)}', '${safeText}')">🗑</button>
+      </span>
       <p class="goal-text">${esc(g.text)}</p>
       ${body}
       ${tags}
     </div>`;
   }).join('') + `</div>`;
 
+  if (done.length) {
+    el.insertAdjacentHTML('beforeend', `<div class="goal-shelf">
+      <h3>🏆 Completed</h3>` + done.map((g) => `
+      <div class="shelf-row">
+        <span class="shelf-text">🎉 ${esc(g.text)}</span>
+        <span class="note">${esc(fmtDate(g.completedAt.slice(0, 10)))}</span>
+        <button class="gtag" title="Bring it back to the active board" onclick="reopenGoalById('${esc(g.id)}')">↺ Reopen</button>
+        <button class="gtag" title="Delete forever" onclick="removeGoalById('${esc(g.id)}', '${esc(g.text).replace(/'/g, '&#39;')}')">🗑</button>
+      </div>`).join('') + `</div>`);
+  }
+
   const when = assessment.assessedAt ? fmtTime(assessment.assessedAt) : null;
   el.insertAdjacentHTML('beforeend', `<div class="coach-foot" style="margin-top:16px">
     <span class="note">${stale ? 'New goal added — refresh to measure it.' : when ? 'Assessed ' + esc(when) : ''}</span>
-    <button onclick="reassessGoals(this)">↻ Re-assess</button>
+    ${active.length ? `<button onclick="reassessGoals(this)">↻ Re-assess</button>` : ''}
   </div>`);
+}
+
+// Complete instantly (no re-think of the rest); reopen re-measures just it.
+async function completeGoalById(id) {
+  const r = await (await fetch(`/api/goals/${encodeURIComponent(id)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ completed: true }),
+  })).json();
+  if (r.error) { alert(r.error); return; }
+  if (GOALS_CACHE) {
+    GOALS_CACHE.goals = GOALS_CACHE.goals.map((g) => (g.id === id ? r.goal : g));
+    GOALS_CACHE.assessment.goals = (GOALS_CACHE.assessment.goals || []).filter((g) => g.id !== id);
+    renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+  } else { GOALS_LOADED = false; loadGoals(true); }
+}
+
+async function reopenGoalById(id) {
+  if (GOAL_THINKING.has(id)) return;
+  if (GOALS_CACHE) {
+    GOALS_CACHE.goals = GOALS_CACHE.goals.map((g) => (g.id === id ? { ...g, completedAt: null } : g));
+    GOAL_THINKING.add(id);
+    renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+  }
+  try {
+    const r = await (await fetch(`/api/goals/${encodeURIComponent(id)}/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed: false }),
+    })).json();
+    if (r.error) throw new Error(r.error);
+    if (GOALS_CACHE) {
+      GOALS_CACHE.goals = GOALS_CACHE.goals.map((g) => (g.id === id ? r.goal : g));
+      if (r.assessment) {
+        GOALS_CACHE.assessment.goals = [
+          ...(GOALS_CACHE.assessment.goals || []).filter((g) => g.id !== id),
+          r.assessment,
+        ];
+      }
+    }
+  } catch (e) {
+    $('goals-list').insertAdjacentHTML('afterbegin', `<p class="errors">${esc(e.message)}</p>`);
+  } finally {
+    GOAL_THINKING.delete(id);
+    if (GOALS_CACHE) renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+    else { GOALS_LOADED = false; loadGoals(true); }
+  }
 }
 
 // ---- tagging activities/habits as counting toward a goal ----
@@ -1443,6 +1508,7 @@ const NAV_INFO = [
   ['data-btn', 'Data', 'Link your Sheet + Doc, edit them, and verify they parse right.'],
   ['settings-btn', 'Widgets', 'Show, hide, and rearrange the dashboard widgets.'],
   ['signout-btn', 'Sign out', 'Log out of this browser.'],
+  ['usage-btn', 'Usage', 'Owner-only: how everyone is actually using the app.'],
   ['info-btn', 'Info', 'This overlay. Click anywhere to close it.'],
 ];
 
@@ -1482,11 +1548,42 @@ function toggleInfoOverlay() {
   window.addEventListener('resize', () => ov.remove(), { once: true });
 }
 
+// ---------- owner usage analytics ----------
+
+async function loadUsage() {
+  const el = $('usage-body');
+  el.innerHTML = `<div class="coach-loading">Loading<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>`;
+  try {
+    const d = await (await fetch('/api/admin/usage')).json();
+    if (d.error) throw new Error(d.error);
+    if (!d.rows.length) {
+      el.innerHTML = `<p class="note">No activity recorded yet — events start accumulating from this deploy onward.</p>`;
+      return;
+    }
+    el.innerHTML = `<table>
+      <tr><th>Person</th><th>Last seen</th><th class="num">Active days</th><th class="num">Logins</th>
+        <th class="num">✓ Daily</th><th class="num">✓ Weekly</th><th class="num">Swaps</th>
+        <th class="num">Goals +</th><th class="num">Goals ✓</th><th class="num">Tags</th>
+        <th class="num">Widget tweaks</th><th class="num">Reports</th></tr>` +
+      d.rows.map((r) => `<tr>
+        <td title="${esc(r.email)}">${esc(r.displayName || r.email.split('@')[0])}</td>
+        <td>${r.lastSeen ? esc(timeAgo(r.lastSeen)) : '—'}</td>
+        <td class="num">${r.activeDays}</td><td class="num">${r.logins}</td>
+        <td class="num">${r.dailyChecks}</td><td class="num">${r.weeklyChecks}</td><td class="num">${r.swaps}</td>
+        <td class="num">${r.goalsCreated}</td><td class="num">${r.goalsCompleted}</td><td class="num">${r.goalTags}</td>
+        <td class="num">${r.widgetTweaks}</td><td class="num">${r.reports}</td></tr>`).join('') +
+      `</table>
+      <p class="note" style="margin-top:10px">Window: last ${d.windowDays} days · "Active days" counts days the dashboard was opened · checks count only check-ONs.</p>`;
+  } catch (e) {
+    el.innerHTML = `<p class="note">Couldn't load usage: ${esc(e.message)}</p>`;
+  }
+}
+
 // ---------- view switching ----------
 // The dashboard, goals, data and report are sibling pages in the same column;
 // only one is mounted at a time so nothing floats over the widgets.
 
-const VIEWS = ['dashboard', 'goals', 'data', 'report', 'social'];
+const VIEWS = ['dashboard', 'goals', 'data', 'report', 'social', 'usage'];
 let CURRENT_VIEW = 'dashboard';
 
 function showView(name) {
@@ -1504,6 +1601,7 @@ function showView(name) {
   if (name === 'goals') loadGoals();
   if (name === 'data') renderDrivePanes();
   if (name === 'social') loadSocial();
+  if (name === 'usage') loadUsage();
 }
 
 async function loadReport(generate) {
