@@ -825,7 +825,6 @@ function renderAuthArea() {
     ? `<span class="badge">${esc(STATUS.email || 'signed in')}</span>`
     : `<button class="primary" onclick="location.href='/auth/google'">Sign in with Google</button>`;
   if (STATUS.loggedIn) $('signout-btn').style.display = '';
-  if (STATUS.isAdmin) $('usage-btn').style.display = '';
 }
 
 // ---------- life report ----------
@@ -1508,7 +1507,6 @@ const NAV_INFO = [
   ['data-btn', 'Data', 'Link your Sheet + Doc, edit them, and verify they parse right.'],
   ['settings-btn', 'Widgets', 'Show, hide, and rearrange the dashboard widgets.'],
   ['signout-btn', 'Sign out', 'Log out of this browser.'],
-  ['usage-btn', 'Usage', 'Owner-only: how everyone is actually using the app.'],
   ['info-btn', 'Info', 'This overlay. Click anywhere to close it.'],
 ];
 
@@ -1548,42 +1546,11 @@ function toggleInfoOverlay() {
   window.addEventListener('resize', () => ov.remove(), { once: true });
 }
 
-// ---------- owner usage analytics ----------
-
-async function loadUsage() {
-  const el = $('usage-body');
-  el.innerHTML = `<div class="coach-loading">Loading<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>`;
-  try {
-    const d = await (await fetch('/api/admin/usage')).json();
-    if (d.error) throw new Error(d.error);
-    if (!d.rows.length) {
-      el.innerHTML = `<p class="note">No activity recorded yet — events start accumulating from this deploy onward.</p>`;
-      return;
-    }
-    el.innerHTML = `<table>
-      <tr><th>Person</th><th>Last seen</th><th class="num">Active days</th><th class="num">Logins</th>
-        <th class="num">✓ Daily</th><th class="num">✓ Weekly</th><th class="num">Swaps</th>
-        <th class="num">Goals +</th><th class="num">Goals ✓</th><th class="num">Tags</th>
-        <th class="num">Widget tweaks</th><th class="num">Reports</th></tr>` +
-      d.rows.map((r) => `<tr>
-        <td title="${esc(r.email)}">${esc(r.displayName || r.email.split('@')[0])}</td>
-        <td>${r.lastSeen ? esc(timeAgo(r.lastSeen)) : '—'}</td>
-        <td class="num">${r.activeDays}</td><td class="num">${r.logins}</td>
-        <td class="num">${r.dailyChecks}</td><td class="num">${r.weeklyChecks}</td><td class="num">${r.swaps}</td>
-        <td class="num">${r.goalsCreated}</td><td class="num">${r.goalsCompleted}</td><td class="num">${r.goalTags}</td>
-        <td class="num">${r.widgetTweaks}</td><td class="num">${r.reports}</td></tr>`).join('') +
-      `</table>
-      <p class="note" style="margin-top:10px">Window: last ${d.windowDays} days · "Active days" counts days the dashboard was opened · checks count only check-ONs.</p>`;
-  } catch (e) {
-    el.innerHTML = `<p class="note">Couldn't load usage: ${esc(e.message)}</p>`;
-  }
-}
-
 // ---------- view switching ----------
 // The dashboard, goals, data and report are sibling pages in the same column;
 // only one is mounted at a time so nothing floats over the widgets.
 
-const VIEWS = ['dashboard', 'goals', 'data', 'report', 'social', 'usage'];
+const VIEWS = ['dashboard', 'goals', 'data', 'report', 'social'];
 let CURRENT_VIEW = 'dashboard';
 
 function showView(name) {
@@ -1601,7 +1568,6 @@ function showView(name) {
   if (name === 'goals') loadGoals();
   if (name === 'data') renderDrivePanes();
   if (name === 'social') loadSocial();
-  if (name === 'usage') loadUsage();
 }
 
 async function loadReport(generate) {
