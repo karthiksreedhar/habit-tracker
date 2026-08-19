@@ -1028,9 +1028,10 @@ function renderGoals(goals, assessment) {
     tags += sug.map((s) =>
       `<button class="gtag suggest" title="${esc(s.why || '')} — click to count it" onclick="linkGoalTag('${esc(g.id)}','${safe(s.phrase)}')">+ ${esc(s.phrase)}</button>`).join('');
     tags += `<button class="gtag add" title="Tag an activity or habit as counting toward this goal" onclick="showTagInput(this,'${esc(g.id)}')">+ tag</button></div>`;
-    return `<div class="goal-card">
+    return `<div class="goal-card" data-gid="${esc(g.id)}">
       <span class="goal-actions">
         <button class="goal-x done-btn" title="Mark this goal complete" onclick="completeGoalById('${esc(g.id)}')">✓ Done</button>
+        <button class="goal-x" title="Edit the wording" onclick="startGoalEdit('${esc(g.id)}')">✎</button>
         <button class="goal-x" title="Delete this goal" onclick="removeGoalById('${esc(g.id)}', '${safeText}')">🗑</button>
       </span>
       <p class="goal-text">${esc(g.text)}</p>
@@ -1055,6 +1056,58 @@ function renderGoals(goals, assessment) {
     <span class="note">${stale ? 'New goal added — refresh to measure it.' : when ? 'Assessed ' + esc(when) : ''}</span>
     ${active.length ? `<button onclick="reassessGoals(this)">↻ Re-assess</button>` : ''}
   </div>`);
+}
+
+// Inline goal editing: swap the text for an input; saving re-measures just
+// this goal (tags and history survive the rewrite).
+function startGoalEdit(id) {
+  const card = document.querySelector(`.goal-card[data-gid="${CSS.escape(id)}"]`);
+  const g = GOALS_CACHE && GOALS_CACHE.goals.find((x) => x.id === id);
+  if (!card || !g || card.querySelector('.goal-edit')) return;
+  const p = card.querySelector('.goal-text');
+  p.outerHTML = `<div class="goal-edit">
+    <input maxlength="200" value="${esc(g.text).replace(/"/g, '&quot;')}"
+      onkeydown="if(event.key==='Enter'){saveGoalEdit('${esc(id)}',this.value)}else if(event.key==='Escape'){renderGoals(GOALS_CACHE.goals,GOALS_CACHE.assessment)}">
+    <button class="primary" onclick="saveGoalEdit('${esc(id)}', this.previousElementSibling.value)">Save</button>
+    <button onclick="renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment)">Cancel</button>
+  </div>`;
+  const input = card.querySelector('.goal-edit input');
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+async function saveGoalEdit(id, text) {
+  text = String(text || '').trim();
+  const g = GOALS_CACHE && GOALS_CACHE.goals.find((x) => x.id === id);
+  if (!text || (g && text === g.text)) {
+    if (GOALS_CACHE) renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+    return;
+  }
+  if (GOAL_THINKING.has(id)) return;
+  if (g) g.text = text; // optimistic — the thinking card shows the new wording
+  GOAL_THINKING.add(id);
+  if (GOALS_CACHE) renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+  try {
+    const r = await (await fetch(`/api/goals/${encodeURIComponent(id)}/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })).json();
+    if (r.error) throw new Error(r.error);
+    if (GOALS_CACHE) {
+      GOALS_CACHE.goals = GOALS_CACHE.goals.map((x) => (x.id === id ? r.goal : x));
+      GOALS_CACHE.assessment.goals = [
+        ...(GOALS_CACHE.assessment.goals || []).filter((x) => x.id !== id),
+        r.assessment,
+      ];
+    }
+  } catch (e) {
+    $('goals-list').insertAdjacentHTML('afterbegin', `<p class="errors">${esc(e.message)}</p>`);
+  } finally {
+    GOAL_THINKING.delete(id);
+    if (GOALS_CACHE) renderGoals(GOALS_CACHE.goals, GOALS_CACHE.assessment);
+    else { GOALS_LOADED = false; loadGoals(true); }
+  }
 }
 
 // Complete instantly (no re-think of the rest); reopen re-measures just it.

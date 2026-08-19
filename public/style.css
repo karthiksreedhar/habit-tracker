@@ -826,3 +826,11 @@ th.sortable.on { color: var(--green-dark); }
 .shelf-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 13.5px; }
 .shelf-row .shelf-text { flex: 1; }
 .shelf-row .gtag { cursor: pointer; }
+.goal-edit { display: flex; gap: 8px; margin: 0 0 10px; align-items: center; }
+.goal-edit input {
+  flex: 1; font: inherit; font-size: 14.5px; font-weight: 600;
+  padding: 7px 12px; border: 1px solid var(--seq-3); border-radius: 10px;
+  background: var(--surface); color: var(--ink); min-width: 0;
+}
+.goal-edit input:focus { outline: none; border-color: var(--green); }
+.goal-edit button { padding: 6px 13px; font-size: 12.5px; flex: none; }

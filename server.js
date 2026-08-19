@@ -35,7 +35,7 @@ const { nowInTz, userTz } = require('./lib/tz');
 const { getReport, listReports } = require('./lib/report');
 const { weatherSeries } = require('./lib/weather');
 const { generateWidget, approveWidget, deleteWidget } = require('./lib/custom-widgets');
-const { listGoals, addGoal, removeGoal, completeGoal, assessGoals, assessSingleGoal, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
+const { listGoals, addGoal, removeGoal, editGoal, completeGoal, assessGoals, assessSingleGoal, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
 const social = require('./lib/social');
 
 const PORT = process.env.PORT || 5757;
@@ -755,6 +755,19 @@ app.post('/api/goals', async (req, res) => {
 // its cached assessment.
 // Mark a goal complete / reopen it. Completing never re-thinks the board;
 // reopening re-measures just that goal so the rest stay put.
+// Edit a goal's wording; re-measures just that goal.
+app.post('/api/goals/:id/edit', async (req, res) => {
+  try {
+    logEvent(req.userEmail, 'goal_edit');
+    const goal = await editGoal(req.userEmail, req.params.id, req.body.text);
+    const data = await loadDashboardData(req);
+    const assessment = await assessSingleGoal(req.userEmail, req.params.id, data);
+    res.json({ ok: true, goal, assessment });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 app.post('/api/goals/:id/complete', async (req, res) => {
   try {
     const completed = !!req.body.completed;
