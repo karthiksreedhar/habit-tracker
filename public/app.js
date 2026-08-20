@@ -568,6 +568,32 @@ function setupDrawer() {
 }
 
 // ---------- coach ----------
+// Standing constraints the coach respects. Kept deliberately quiet in the UI:
+// one muted line under the card, click to expand and prune.
+let CONSTRAINTS = [];
+let CONSTRAINTS_OPEN = false;
+
+async function loadConstraints() {
+  try {
+    const r = await (await fetch('/api/constraints')).json();
+    CONSTRAINTS = r.constraints || [];
+    if (COACH) renderCoach();
+  } catch {}
+}
+
+async function dropConstraint(id) {
+  try {
+    const r = await (await fetch('/api/constraints/' + encodeURIComponent(id), { method: 'DELETE' })).json();
+    CONSTRAINTS = r.constraints || [];
+    renderCoach();
+  } catch {}
+}
+
+function toggleConstraints() {
+  CONSTRAINTS_OPEN = !CONSTRAINTS_OPEN;
+  renderCoach();
+}
+
 async function loadCoach(refresh) {
   const el = $('coach');
   el.innerHTML = `<h2>Daily Coach</h2><div class="coach-loading">${refresh ? 'Rethinking today' : 'Thinking about your day'}<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>`;
@@ -581,6 +607,7 @@ async function loadCoach(refresh) {
     COACH = c;
     COACH_LATEST = c.date;
     renderCoach();
+    loadConstraints();
     renderWidgetMenu();
     applyWidgets();
   } catch (e) {
@@ -625,6 +652,12 @@ function renderCoach(justCheckedIdx = -1) {
     if (FAILING.has(i)) {
       return `<div class="todo failing"><span class="box"></span><span class="txt">Swapping it out<span class="dots"><i>.</i><i>.</i><i>.</i></span></span></div>`;
     }
+    if (ASKING === i) {
+      return `<div class="todo asking">
+        <span class="box"></span>
+        <input class="reason-input" data-i="${i}" placeholder="why not? (optional — Enter to swap, Esc to cancel)" />
+      </div>`;
+    }
     return `<div class="todo ${c.checked[i] ? 'done' : ''} ${i === justCheckedIdx ? 'just-checked' : ''}" data-i="${i}" data-tt="${tt('Why', [t.why])}">
       <span class="box">${c.checked[i] ? '✓' : ''}</span><span class="txt">${esc(t.text)}</span>
       ${c.checked[i] || isPast ? '' : `<button class="fail-x" data-i="${i}" title="Already failed — swap for a new one">✕</button>`}
@@ -654,6 +687,18 @@ function renderCoach(justCheckedIdx = -1) {
     <span class="spacer"></span>
     ${isPast ? `<button onclick="coachNav(COACH_LATEST)">↩ Back to today</button>` : `<button onclick="loadCoach(true)">↻ Refresh</button>`}
   </div>`;
+  if (CONSTRAINTS.length) {
+    html += `<div class="coach-constraints">
+      <span class="cx-toggle" onclick="toggleConstraints()" title="Things the coach won't suggest">${CONSTRAINTS.length} standing note${CONSTRAINTS.length > 1 ? 's' : ''}</span>
+      ${CONSTRAINTS_OPEN ? `<div class="cx-list">` + CONSTRAINTS.map((k) => `
+        <div class="cx-item">
+          <span class="cx-label">${esc(k.label)}</span>
+          <span class="cx-rule">${esc(k.rule)}</span>
+          ${k.unblockHabit ? `<span class="cx-until">until you log ${esc(k.unblockHabit)}</span>` : ''}
+          <button class="cx-drop" onclick="dropConstraint('${esc(k.id)}')" title="Forget this">✕</button>
+        </div>`).join('') + `</div>` : ''}
+    </div>`;
+  }
   $('coach').innerHTML = html;
   $('coach').querySelectorAll('.todo[data-i]').forEach((row) => {
     row.onclick = () => toggleTodo(Number(row.getAttribute('data-i')));
@@ -661,9 +706,26 @@ function renderCoach(justCheckedIdx = -1) {
   $('coach').querySelectorAll('.fail-x').forEach((btn) => {
     btn.onclick = (e) => {
       e.stopPropagation();
-      failTodo(Number(btn.getAttribute('data-i')));
+      ASKING = Number(btn.getAttribute('data-i'));
+      renderCoach();
     };
   });
+  const ri = $('coach').querySelector('.reason-input');
+  if (ri) {
+    ri.focus();
+    ri.onclick = (e) => e.stopPropagation();
+    ri.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        const i = Number(ri.getAttribute('data-i'));
+        const reason = ri.value.trim();
+        ASKING = -1;
+        failTodo(i, reason);
+      } else if (e.key === 'Escape') {
+        ASKING = -1;
+        renderCoach();
+      }
+    };
+  }
 }
 
 // ---------- weekly coach ----------
@@ -780,20 +842,23 @@ async function toggleWeeklyGoal(i) {
 }
 
 const FAILING = new Set();
-async function failTodo(i) {
+let ASKING = -1;
+async function failTodo(i, reason = '') {
   if (FAILING.has(i)) return;
+  const item = (COACH.todos[i] || {}).text || '';
   FAILING.add(i);
   renderCoach();
   try {
     const res = await fetch('/api/coach/fail', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: COACH.date, index: i }),
+      body: JSON.stringify({ date: COACH.date, index: i, reason, item }),
     });
     const c = await res.json();
     if (c.error) throw new Error(c.error);
     COACH.todos = c.todos;
     COACH.checked = c.checked;
+    if (c.constraintAdded) loadConstraints();
     FAILING.delete(i);
     renderCoach(i); // pop-in on the replacement
   } catch (e) {

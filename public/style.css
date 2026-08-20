@@ -834,3 +834,60 @@ th.sortable.on { color: var(--green-dark); }
 }
 .goal-edit input:focus { outline: none; border-color: var(--green); }
 .goal-edit button { padding: 6px 13px; font-size: 12.5px; flex: none; }
+
+/* ---------- coach constraints (deliberately quiet) ---------- */
+
+.coach-constraints {
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.cx-toggle {
+  color: var(--muted, #7b8a75);
+  opacity: 0.65;
+  cursor: pointer;
+  border-bottom: 1px dotted currentColor;
+}
+
+.cx-toggle:hover { opacity: 1; }
+
+.cx-list {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.cx-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.cx-label { font-weight: 600; white-space: nowrap; }
+.cx-rule { color: var(--muted, #7b8a75); flex: 1; }
+.cx-until { color: var(--muted, #7b8a75); opacity: 0.75; white-space: nowrap; font-style: italic; }
+
+.cx-drop {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--muted, #7b8a75);
+  opacity: 0.5;
+  padding: 0 2px;
+}
+
+.cx-drop:hover { opacity: 1; }
+
+.todo.asking .reason-input {
+  flex: 1;
+  border: 0;
+  border-bottom: 1px solid var(--muted, #7b8a75);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 0;
+  outline: none;
+}

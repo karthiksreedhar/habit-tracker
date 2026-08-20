@@ -36,6 +36,7 @@ const { getReport, listReports } = require('./lib/report');
 const { weatherSeries } = require('./lib/weather');
 const { generateWidget, approveWidget, deleteWidget } = require('./lib/custom-widgets');
 const { listGoals, addGoal, removeGoal, editGoal, completeGoal, assessGoals, assessSingleGoal, goalsPromptBlock, linkActivity, unlinkActivity } = require('./lib/goals');
+const { listConstraints, activeConstraints, addConstraint, removeConstraint, constraintsBlock } = require('./lib/constraints');
 const social = require('./lib/social');
 
 const PORT = process.env.PORT || 5757;
@@ -650,7 +651,8 @@ app.get('/api/coach', async (req, res) => {
     if (!hasData(data)) return res.json({ error: 'Add your habit tracker + journal links first (⚙︎ Widgets → Data sources).' });
     let widgetState = null;
     try { widgetState = (await getUser(req.userEmail))?.widgetState || null; } catch {}
-    const card = await getCoach(req.userEmail, { ...data, widgetState, tz: userTz(req), force: req.query.refresh === '1' });
+    const cBlock = constraintsBlock(await activeConstraints(req.userEmail, data.habits));
+    const card = await getCoach(req.userEmail, { ...data, widgetState, tz: userTz(req), constraintsBlock: cBlock, force: req.query.refresh === '1' });
     res.json({ ...card, adherence: await getAdherence(req.userEmail) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -669,10 +671,25 @@ app.post('/api/coach/check', async (req, res) => {
 
 app.post('/api/coach/fail', async (req, res) => {
   try {
-    const { date, index } = req.body;
+    const { date, index, reason, item } = req.body;
     const data = await loadDashboardData(req);
-    logEvent(req.userEmail, 'coach_swap', { kind: 'daily' });
-    res.json(await replaceTodo(req.userEmail, { date, index: Number(index), tz: userTz(req), ...data }));
+    logEvent(req.userEmail, 'coach_swap', { kind: 'daily', withReason: !!(reason || '').trim() });
+    // A reason becomes a standing rule, and applies to the replacement we are
+    // about to ask for. Other items on today's card are left alone.
+    let added = null;
+    if ((reason || '').trim()) {
+      try {
+        added = await addConstraint(req.userEmail, {
+          reason: String(reason).trim(),
+          item: item || '',
+          date,
+          habitNames: (data.habits && data.habits.habitNames) || [],
+        });
+      } catch (e) { console.error('[constraints] classify failed:', e.message); }
+    }
+    const cBlock = constraintsBlock(await activeConstraints(req.userEmail, data.habits));
+    const card = await replaceTodo(req.userEmail, { date, index: Number(index), tz: userTz(req), constraintsBlock: cBlock, ...data });
+    res.json({ ...card, constraintAdded: added });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -695,7 +712,8 @@ app.get('/api/coach/weekly', async (req, res) => {
         goalsBlock = goalsPromptBlock(goals, user && user.goalAssessment);
       }
     } catch {}
-    const card = await getWeeklyCoach(req.userEmail, { ...data, goalsBlock, tz: userTz(req), force: req.query.refresh === '1' });
+    const cBlock = constraintsBlock(await activeConstraints(req.userEmail, data.habits));
+    const card = await getWeeklyCoach(req.userEmail, { ...data, goalsBlock, tz: userTz(req), constraintsBlock: cBlock, force: req.query.refresh === '1' });
     res.json({ ...card, adherence: await getAdherence(req.userEmail) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -714,10 +732,43 @@ app.post('/api/coach/weekly/check', async (req, res) => {
 
 app.post('/api/coach/weekly/fail', async (req, res) => {
   try {
-    const { week, index } = req.body;
+    const { week, index, reason, item } = req.body;
     const data = await loadDashboardData(req);
-    logEvent(req.userEmail, 'coach_swap', { kind: 'weekly' });
-    res.json(await replaceWeeklyGoal(req.userEmail, { week, index: Number(index), tz: userTz(req), ...data }));
+    logEvent(req.userEmail, 'coach_swap', { kind: 'weekly', withReason: !!(reason || '').trim() });
+    let added = null;
+    if ((reason || '').trim()) {
+      try {
+        added = await addConstraint(req.userEmail, {
+          reason: String(reason).trim(),
+          item: item || '',
+          date: new Date().toISOString().slice(0, 10),
+          habitNames: (data.habits && data.habits.habitNames) || [],
+        });
+      } catch (e) { console.error('[constraints] classify failed:', e.message); }
+    }
+    const cBlock = constraintsBlock(await activeConstraints(req.userEmail, data.habits));
+    const card = await replaceWeeklyGoal(req.userEmail, { week, index: Number(index), tz: userTz(req), constraintsBlock: cBlock, ...data });
+    res.json({ ...card, constraintAdded: added });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ---------- constraints ----------
+
+app.get('/api/constraints', async (req, res) => {
+  try {
+    const all = await listConstraints(req.userEmail);
+    res.json({ constraints: all.filter((c) => !c.retiredAt), retired: all.filter((c) => c.retiredAt) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/constraints/:id', async (req, res) => {
+  try {
+    const next = await removeConstraint(req.userEmail, req.params.id);
+    res.json({ ok: true, constraints: next.filter((c) => !c.retiredAt) });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
