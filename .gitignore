@@ -7,3 +7,9 @@ node_modules/
 seed-habits.csv
 seed-journal.txt
 tokens.json
+
+# Xcode
+ios/**/xcuserdata/
+ios/**/*.xcworkspace/xcuserdata/
+ios/build/
+DerivedData/

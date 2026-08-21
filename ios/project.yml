@@ -1,0 +1,32 @@
+name: LifeDash
+options:
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+targets:
+  LifeDash:
+    type: application
+    platform: iOS
+    sources:
+      - LifeDash
+    info:
+      path: LifeDash/Info.plist
+      properties:
+        CFBundleDisplayName: Life Dashboard
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        CFBundleURLTypes:
+          - CFBundleURLName: com.karthiksreedhar.lifedash.auth
+            CFBundleURLSchemes: [lifedash]
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.karthiksreedhar.lifedash
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: false
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

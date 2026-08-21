@@ -150,7 +150,66 @@ app.get('/auth/google', (req, res) => {
     access_type: 'offline',
     prompt: 'consent',
     scope: SCOPES,
+    // The iOS app authenticates through the system browser; `state=app` makes
+    // the callback hand the session back via a one-time deep-link token.
+    ...(req.query.app === '1' ? { state: 'app' } : {}),
   }));
+});
+
+// ---------- native-app session handoff ----------
+// Google forbids OAuth inside embedded webviews, so the iOS app signs in via
+// ASWebAuthenticationSession (system browser). The callback below then mints
+// a single-purpose 5-minute token, deep-links back into the app, and
+// /auth/app-complete turns it into a normal session cookie INSIDE the app's
+// webview. The token never contains Google credentials — just our own signed
+// email + expiry, same trust as the session cookie itself.
+
+function signAppToken(email) {
+  const payload = Buffer.from(JSON.stringify({
+    email,
+    exp: Date.now() + 5 * 60e3,
+    app: true,
+    jti: crypto.randomBytes(9).toString('base64url'),
+  })).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET + ':app').update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyAppToken(token) {
+  try {
+    const [payload, sig] = String(token).split('.');
+    const expect = crypto.createHmac('sha256', SESSION_SECRET + ':app').update(payload).digest('base64url');
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (!data.email || !data.app || data.exp < Date.now()) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// Each handoff token is good for exactly one exchange, so a link that leaked
+// (another app claiming the URL scheme, a shoulder-surfed URL) can't be reused.
+async function claimAppToken(data) {
+  if (!data.jti) return true; // tokens minted before single-use existed
+  try {
+    const user = await getUser(data.email);
+    const used = Array.isArray(user && user.appTokensUsed) ? user.appTokensUsed : [];
+    if (used.includes(data.jti)) return false;
+    await updateUser(data.email, { appTokensUsed: [...used, data.jti].slice(-10) });
+    return true;
+  } catch {
+    return true; // never lock someone out of sign-in on a database hiccup
+  }
+}
+
+app.get('/auth/app-complete', async (req, res) => {
+  const data = verifyAppToken(req.query.token);
+  if (!data || !(await claimAppToken(data))) {
+    return res.status(400).send('Sign-in link expired — try again from the app.');
+  }
+  setSessionCookie(req, res, data.email);
+  res.redirect('/');
 });
 
 app.get('/oauth2callback', async (req, res) => {
@@ -168,8 +227,12 @@ app.get('/oauth2callback', async (req, res) => {
     const merged = { ...(existing && existing.tokens), ...tokens };
     await updateUser(email, { tokens: merged });
 
-    setSessionCookie(req, res, email);
     logEvent(email, 'login');
+    if (req.query.state === 'app') {
+      // Back into the iOS app; it exchanges the token inside its own webview
+      return res.redirect('lifedash://auth?token=' + encodeURIComponent(signAppToken(email)));
+    }
+    setSessionCookie(req, res, email);
     res.redirect('/');
   } catch (e) {
     res.status(500).send('Sign-in failed: ' + e.message);
